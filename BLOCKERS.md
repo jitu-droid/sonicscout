@@ -47,6 +47,24 @@ and Rtools installed, then re-run `tests/testthat.R` and
 `pkg/whatsappaudioR`'s test suite to confirm it no longer segfaults before
 switching the code back.
 
+## Rtools install failed (winget), needed only for full `R CMD check`
+
+**What was tried:** `winget install --id RProject.Rtools -e`.
+
+**Error:** Exit code 2, "You cancelled the installation" -- likely the
+installer wanted an interactive prompt this headless session can't supply.
+
+**Believed fix:** Run the Rtools installer yourself interactively (download
+from https://cran.r-project.org/bin/windows/Rtools/), or find the right
+silent-install flags for winget in a terminal you can watch.
+
+**What Jitu needs to do:** Nothing urgent -- `whatsappaudioR` has zero
+compiled code, so this only gates a formality (`R CMD check`'s Windows
+policy of requiring Rtools regardless of whether a package needs
+compilation). The package installs fine via `install.packages(repos=NULL,
+type="source")` and both test suites pass. Install Rtools yourself only if
+you want the full `devtools::check()` "0 errors/warnings/notes" badge.
+
 ## Set up Twilio sandbox and run a live test (needs your Twilio account)
 
 **What was tried:** N/A -- this fundamentally requires an account only you

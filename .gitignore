@@ -24,9 +24,11 @@ data/codec_experiment/real/*
 models/*.rds
 models/*.rda
 
-# logs contain request payloads
+# logs contain request payloads -- regenerate demo entries with
+# `Rscript R/seed_demo_logs.R` (real predict_pest() output, not fabricated)
 logs/*.log
 logs/*.jsonl
+logs/audio/
 
 # OS / editor
 .DS_Store

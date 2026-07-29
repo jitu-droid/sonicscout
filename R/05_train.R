@@ -41,21 +41,38 @@ SEED <- 20260729  # fixed for reproducibility; not tuned to flatter results
 #' Assign each unique source_file to train/val/test, then join back onto the
 #' window-level data. Asserts (does not just assume) that no source_file
 #' appears in more than one split.
+#'
+#' Stratified by label: allocation happens separately within each label's
+#' own (shuffled) source-file list, not by shuffling all source files
+#' together. With a small corpus (as low as 1 source file for some classes
+#' right now -- see docs/methodology.md), a single non-stratified shuffle
+#' can isolate an entire class into one split, which both starves test
+#' coverage for that class AND can leave randomForest() with fewer than 2
+#' classes to train on at all. A class with only one source file goes
+#' entirely to train (there's no way to split one file across sets) --
+#' this is a real data-scarcity limitation, reported honestly rather than
+#' papered over.
 grouped_split <- function(features_df, ratios = SPLIT_RATIOS, seed = SEED) {
   set.seed(seed)
-  sources <- unique(features_df$source_file)
-  sources <- sample(sources)  # shuffle before slicing
 
-  n <- length(sources)
-  n_train <- floor(n * ratios["train"])
-  n_val <- floor(n * ratios["val"])
+  source_labels <- unique(features_df[, c("source_file", "label")])
+  split_map <- character(0)
 
-  split_assignment <- c(
-    rep("train", n_train),
-    rep("val", n_val),
-    rep("test", n - n_train - n_val)
-  )
-  split_map <- stats::setNames(split_assignment, sources)
+  for (lbl in unique(source_labels$label)) {
+    srcs <- sample(source_labels$source_file[source_labels$label == lbl])
+    n <- length(srcs)
+
+    if (n == 1) {
+      assignment <- "train"
+    } else {
+      n_train <- max(1, floor(n * ratios["train"]))
+      n_val <- min(floor(n * ratios["val"]), n - n_train)
+      n_test <- n - n_train - n_val
+      assignment <- c(rep("train", n_train), rep("val", n_val), rep("test", n_test))
+    }
+
+    split_map[srcs] <- assignment
+  }
 
   features_df$split <- unname(split_map[features_df$source_file])
 

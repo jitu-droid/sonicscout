@@ -78,11 +78,11 @@ ui <- navbarPage(
       ),
       mainPanel(
         fluidRow(
-          column(6, plotOutput("waveform_plot", height = "220px")),
-          column(6, plotOutput("spectrogram_plot", height = "220px"))
+          column(6, plotOutput("waveform_plot", height = "220px", width = "400px")),
+          column(6, plotOutput("spectrogram_plot", height = "220px", width = "400px"))
         ),
         fluidRow(
-          column(6, plotOutput("confidence_plot", height = "260px")),
+          column(6, plotOutput("confidence_plot", height = "260px", width = "400px")),
           column(6, plotlyOutput("map_plot", height = "260px"))
         ),
         tags$hr(),

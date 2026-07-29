@@ -112,35 +112,58 @@ write_synthetic_wav <- function(x, species, filename, sr = GEN_SAMPLE_RATE) {
 
 # ---- Build the corpus ---------------------------------------------------------
 
-build_synthetic_corpus <- function() {
+#' @param n_variants_per_class Multiple jittered instances per class, not
+#'   just one. Needed so R/05_train.R's grouped train/val/test split (by
+#'   source recording) has more than a single source file to work with per
+#'   class -- with only one file per class, an entire class could be
+#'   isolated into just one split, both starving test coverage and risking
+#'   randomForest() seeing fewer than 2 classes in training. Jitter (not
+#'   identical copies) stands in for call-to-call/individual variation.
+build_synthetic_corpus <- function(n_variants_per_class = 5) {
   written <- character()
 
   # 1. Stridulation analogue: low-frequency pulsed harmonic call (Orthoptera-like).
-  stridulation <- gen_harmonic_tone(f0 = 250, n_harmonics = 4, harmonic_decay = 0.6,
-                                     pulse_rate = 20, pulse_duty = 0.4)
-  written <- c(written, write_synthetic_wav(stridulation, "synthetic_stridulation", "call_001.wav"))
+  stridulation_variants <- vector("list", n_variants_per_class)
+  for (i in seq_len(n_variants_per_class)) {
+    f0 <- 250 + stats::runif(1, -30, 30)
+    pulse_rate <- 20 + stats::runif(1, -3, 3)
+    tone <- gen_harmonic_tone(f0 = f0, n_harmonics = 4, harmonic_decay = 0.6,
+                               pulse_rate = pulse_rate, pulse_duty = 0.4)
+    stridulation_variants[[i]] <- tone
+    written <- c(written, write_synthetic_wav(tone, "synthetic_stridulation", sprintf("call_%03d.wav", i)))
+  }
 
   # 2. Mosquito wingbeat analogue: steady near-pure tone with harmonics, no AM.
-  wingbeat <- gen_harmonic_tone(f0 = 450, n_harmonics = 3, harmonic_decay = 0.4)
-  written <- c(written, write_synthetic_wav(wingbeat, "synthetic_mosquito_wingbeat", "wingbeat_001.wav"))
+  for (i in seq_len(n_variants_per_class)) {
+    f0 <- 450 + stats::runif(1, -40, 40)
+    tone <- gen_harmonic_tone(f0 = f0, n_harmonics = 3, harmonic_decay = 0.4)
+    written <- c(written, write_synthetic_wav(tone, "synthetic_mosquito_wingbeat", sprintf("wingbeat_%03d.wav", i)))
+  }
 
   # 3. Above-Nyquist control: a pure tone that MUST be destroyed by the 16kHz
   #    resample. This is the ground-truth check that the codec simulation is
-  #    behaving correctly -- see docs/codec_findings.md after Step 3.
+  #    behaving correctly -- see docs/codec_findings.md after Step 3. Single
+  #    file: it's a codec-experiment-only control, not a classifier class
+  #    (see SYNTHETIC_CODEC_ONLY_LABELS in R/03_preprocess.R).
   above_nyquist <- gen_harmonic_tone(f0 = 10000, n_harmonics = 1, harmonic_decay = 0)
   written <- c(written, write_synthetic_wav(above_nyquist, "synthetic_above_nyquist_control", "control_10khz.wav"))
 
   # 4. Broadband noise (ambient/negative-class analogue).
-  noise <- gen_white_noise()
-  written <- c(written, write_synthetic_wav(noise, "synthetic_broadband_noise", "noise_001.wav"))
+  for (i in seq_len(n_variants_per_class)) {
+    noise <- gen_white_noise()
+    written <- c(written, write_synthetic_wav(noise, "synthetic_broadband_noise", sprintf("noise_%03d.wav", i)))
+  }
 
   # 5. Chewing pulse train -- deliberately straddles the 8kHz wall.
-  chewing <- gen_chewing_pulses()
-  written <- c(written, write_synthetic_wav(chewing, "synthetic_chewing_pulses", "chewing_001.wav"))
+  for (i in seq_len(n_variants_per_class)) {
+    pulse_rate <- 8 + stats::runif(1, -2, 2)
+    chewing <- gen_chewing_pulses(pulse_rate = pulse_rate)
+    written <- c(written, write_synthetic_wav(chewing, "synthetic_chewing_pulses", sprintf("chewing_%03d.wav", i)))
+  }
 
-  # 6. Tone + noise at several SNRs (robustness sweep, uses the stridulation tone).
+  # 6. Tone + noise at several SNRs (robustness sweep, uses the first stridulation variant).
   for (snr_db in c(20, 10, 0, -10)) {
-    mixed <- mix_at_snr(stridulation, gen_white_noise(amp = 1), snr_db)
+    mixed <- mix_at_snr(stridulation_variants[[1]], gen_white_noise(amp = 1), snr_db)
     fname <- sprintf("call_snr_%sdB.wav", ifelse(snr_db < 0, paste0("neg", abs(snr_db)), snr_db))
     written <- c(written, write_synthetic_wav(mixed, "synthetic_tone_plus_noise", fname))
   }

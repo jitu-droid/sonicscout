@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sonicscout-dashboard",
+      "runtimeExecutable": "C:\\Program Files\\R\\R-4.6.1\\bin\\Rscript.exe",
+      "runtimeArgs": ["-e", "shiny::runApp('dashboard', port=3838, host='127.0.0.1', launch.browser=FALSE)"],
+      "port": 3838
+    }
+  ]
+}

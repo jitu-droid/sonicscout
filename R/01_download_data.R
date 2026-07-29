@@ -117,7 +117,7 @@ download_tracked <- function(url, dest_path, source, label, license, manifest_en
 
   ensure_dir(dirname(dest_path))
   ok <- tryCatch({
-    req <- httr2::request(url) |> httr2::req_timeout(900)
+    req <- httr2::request(url) |> httr2::req_timeout(1800)
     resp <- httr2::req_perform(req, path = dest_path)
     httr2::resp_status(resp) < 400
   }, error = function(e) {

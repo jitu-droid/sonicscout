@@ -9,11 +9,11 @@ not estimates. Re-run the script to regenerate this file from scratch.
 
 |species                         | mean_survivability| mean_pearson| mean_cosine| n_files|
 |:-------------------------------|------------------:|------------:|-----------:|-------:|
-|synthetic_stridulation          |              0.964|        0.963|       0.965|       1|
-|synthetic_tone_plus_noise       |              0.945|        0.930|       0.960|       4|
-|synthetic_chewing_pulses        |              0.924|        0.877|       0.970|       1|
-|synthetic_mosquito_wingbeat     |              0.807|        0.806|       0.808|       1|
-|synthetic_broadband_noise       |              0.608|        0.249|       0.967|       1|
+|synthetic_stridulation          |              0.969|        0.968|       0.970|       5|
+|synthetic_tone_plus_noise       |              0.945|        0.929|       0.961|       4|
+|synthetic_chewing_pulses        |              0.910|        0.858|       0.963|       5|
+|synthetic_mosquito_wingbeat     |              0.800|        0.799|       0.802|       5|
+|synthetic_broadband_noise       |              0.510|        0.055|       0.964|       5|
 |synthetic_above_nyquist_control |              0.101|       -0.097|       0.298|       1|
 
 ## Per-frequency-band energy retention (degraded / original)
@@ -21,11 +21,11 @@ not estimates. Re-run the script to regenerate this file from scratch.
 |species                         | 0-500Hz| 2-4kHz| 4-8kHz| 500Hz-2kHz| >8kHz|
 |:-------------------------------|-------:|------:|------:|----------:|-----:|
 |synthetic_above_nyquist_control |      NA|     NA|     NA|         NA|     0|
-|synthetic_broadband_noise       |   2.527|  2.155|  1.725|      2.433|     0|
-|synthetic_chewing_pulses        |      NA|  2.310|  2.028|      5.124|     0|
-|synthetic_mosquito_wingbeat     |   1.323|     NA|     NA|      1.826|    NA|
-|synthetic_stridulation          |   1.790|     NA|     NA|      2.022|    NA|
-|synthetic_tone_plus_noise       |   1.813|  1.433|  1.122|      1.822|     0|
+|synthetic_broadband_noise       |   2.470|  2.163|  1.696|      2.498|     0|
+|synthetic_chewing_pulses        |      NA|  2.619|  2.264|      3.889|     0|
+|synthetic_mosquito_wingbeat     |   1.241|     NA|     NA|      1.912|    NA|
+|synthetic_stridulation          |   1.866|     NA|     NA|      2.058|    NA|
+|synthetic_tone_plus_noise       |   1.841|  1.748|  1.371|      1.964|     0|
 
 ## Reading the >8kHz column
 

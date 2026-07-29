@@ -42,12 +42,25 @@ SILENCE_THRESHOLD_DB <- -35
 # Synthetic classes that exist purely to ground-truth-check the codec
 # simulation (Deliverable A), not to represent a pest/ambient class -- these
 # are excluded from the classifier's training set. See docs/methodology.md.
-SYNTHETIC_CODEC_ONLY_LABELS <- c(
-  "synthetic_above_nyquist_control", "synthetic_broadband_noise",
-  "synthetic_tone_plus_noise"
-)
+# NOTE: this must NOT include synthetic_broadband_noise (it's the ambient/
+# negative-class stand-in -- see R/00_synthetic_corpus.R) or
+# synthetic_tone_plus_noise (a legitimate robustness-sweep class); an
+# earlier version of this list wrongly excluded both, silently dropping 2
+# of 6 classes from every training run without any error or warning.
+SYNTHETIC_CODEC_ONLY_LABELS <- c("synthetic_above_nyquist_control")
 
 # ---- Source discovery -----------------------------------------------------
+
+AUDIO_EXTENSIONS <- c("wav", "mp3", "ogg", "opus", "m4a")
+
+# Cap real ESC-50 clips per subcategory: ESC-50 has 40 clips/category, and
+# with 14 ambient categories that's 560 real ambient windows-worth against
+# a synthetic corpus of 5 source files per pest class -- wildly imbalanced
+# and slow to process for a hackathon-scale demo. Capped near the synthetic
+# per-class count instead of forcing exact balance (real data scarcity for
+# pest classes is real and should be visible, not hidden). Sampled (fixed
+# seed), not first-N, to avoid any accidental ordering bias.
+MAX_REAL_PER_SUBCATEGORY <- 5
 
 #' Collect every (path, label, data_origin) row we have labelled audio for.
 #' `label` for ESC-50 ambient categories is coarsened to "ambient" for the
@@ -57,17 +70,32 @@ collect_labeled_sources <- function() {
 
   if (file.exists(RAW_MANIFEST_PATH)) {
     raw_manifest <- utils::read.csv(RAW_MANIFEST_PATH, stringsAsFactors = FALSE)
-    for (i in seq_len(nrow(raw_manifest))) {
-      r <- raw_manifest[i, ]
-      if (!file.exists(r$file)) next
-      is_ambient <- r$source == "ESC-50"
-      rows[[length(rows) + 1]] <- data.frame(
-        path = r$file,
-        label = if (is_ambient) "ambient" else r$label,
-        subcategory = if (is_ambient) r$label else NA_character_,
-        data_origin = "real",
-        stringsAsFactors = FALSE
-      )
+    # Drop non-audio manifest rows (e.g. the ESC-50 zip archive itself is
+    # logged as its own manifest entry alongside the individual clips it
+    # was extracted from -- it's not something wa_read() can decode).
+    raw_manifest <- raw_manifest[tolower(tools::file_ext(raw_manifest$file)) %in% AUDIO_EXTENSIONS, ]
+
+    raw_manifest$is_ambient <- raw_manifest$source == "ESC-50"
+    raw_manifest$subcat_key <- ifelse(raw_manifest$is_ambient, raw_manifest$label, raw_manifest$source)
+    set.seed(20260729)
+    for (key in unique(raw_manifest$subcat_key)) {
+      subset_idx <- which(raw_manifest$subcat_key == key)
+      keep_idx <- if (length(subset_idx) > MAX_REAL_PER_SUBCATEGORY) {
+        sample(subset_idx, MAX_REAL_PER_SUBCATEGORY)
+      } else {
+        subset_idx
+      }
+      for (i in keep_idx) {
+        r <- raw_manifest[i, ]
+        if (!file.exists(r$file)) next
+        rows[[length(rows) + 1]] <- data.frame(
+          path = r$file,
+          label = if (r$is_ambient) "ambient" else r$label,
+          subcategory = if (r$is_ambient) r$label else NA_character_,
+          data_origin = "real",
+          stringsAsFactors = FALSE
+        )
+      }
     }
   } else {
     message(RAW_MANIFEST_PATH, " not found -- no real-data rows (run R/01_download_data.R first if you want real audio in the training set).")
@@ -76,12 +104,19 @@ collect_labeled_sources <- function() {
   if (dir.exists(SYNTHETIC_DIR)) {
     species_dirs <- list.dirs(SYNTHETIC_DIR, recursive = FALSE)
     for (d in species_dirs) {
-      label <- basename(d)
-      if (label %in% SYNTHETIC_CODEC_ONLY_LABELS) next
+      dir_label <- basename(d)
+      if (dir_label %in% SYNTHETIC_CODEC_ONLY_LABELS) next
       files <- list.files(d, pattern = "\\.wav$", full.names = TRUE)
       if (length(files) == 0) next
+      # synthetic_broadband_noise is documented (R/00_synthetic_corpus.R) as
+      # the ambient/negative-class stand-in -- recognise it as "ambient" so
+      # the false-positive-rate-vs-ambient metric is computable even when
+      # running on synthetic data alone (no real ESC-50 data yet).
+      is_ambient <- dir_label == "synthetic_broadband_noise"
       rows[[length(rows) + 1]] <- data.frame(
-        path = files, label = label, subcategory = NA_character_,
+        path = files,
+        label = if (is_ambient) "ambient" else dir_label,
+        subcategory = if (is_ambient) dir_label else NA_character_,
         data_origin = "synthetic", stringsAsFactors = FALSE
       )
     }

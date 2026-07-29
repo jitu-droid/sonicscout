@@ -148,7 +148,7 @@ function(req, res, From = NA, NumMedia = "0", MediaUrl0 = NULL, MediaContentType
   # replay mode (Deliverable F) can show a real waveform/spectrogram for this
   # request without a live connection.
   ensure_dir(REQUEST_AUDIO_DIR)
-  archived_audio_path <- file.path(REQUEST_AUDIO_DIR, paste0(audio_hash, tools::file_ext(tmp_audio)))
+  archived_audio_path <- file.path(REQUEST_AUDIO_DIR, paste0(audio_hash, ".", tools::file_ext(tmp_audio)))
   file.copy(tmp_audio, archived_audio_path, overwrite = TRUE)
 
   log_request(From, if (isTRUE(result$low_confidence)) "low_confidence" else "predicted",

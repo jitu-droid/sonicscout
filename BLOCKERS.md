@@ -62,3 +62,35 @@ and send one real WhatsApp voice note through the full path.
 the one part of the "definition of done" (a real WhatsApp voice note
 returning a correct ID) that cannot be automated without your credentials
 and phone.
+
+## 2026-07-29 19:22 -- Download ESC-50 ambient corpus
+
+**Error:** download_tracked() returned FALSE for the ESC-50 zip (see console output above for the underlying error)
+
+**Believed fix:** Check network access to codeload.github.com, or manually download https://github.com/karolpiczak/ESC-50 and place ESC-50-master.zip at data/raw/esc50/
+
+**What Jitu needs to do:** Nothing required unless the automated download keeps failing -- check BLOCKERS.md history for repeat failures
+
+## 2026-07-29 19:22 -- xeno-canto API query for 'Schistocerca gregaria'
+
+**Error:** Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)
+
+**Believed fix:** May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species
+
+**What Jitu needs to do:** If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for 'Schistocerca gregaria' from xeno-canto.org and place them under data/raw/xenocanto/desert_locust/
+
+## 2026-07-29 19:22 -- xeno-canto API query for 'Locusta migratoria'
+
+**Error:** Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)
+
+**Believed fix:** May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species
+
+**What Jitu needs to do:** If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for 'Locusta migratoria' from xeno-canto.org and place them under data/raw/xenocanto/migratory_locust/
+
+## 2026-07-29 19:22 -- xeno-canto API query for 'gen:Culex'
+
+**Error:** Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)
+
+**Believed fix:** May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species
+
+**What Jitu needs to do:** If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for 'gen:Culex' from xeno-canto.org and place them under data/raw/xenocanto/culex_mosquito/

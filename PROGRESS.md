@@ -109,3 +109,84 @@ synthetic_broadband_noise's Pearson correlation (0.249) is much lower than
 its cosine similarity (0.967) -- expected for noise-like signals where
 Pearson correlation is a poor descriptor shape-wise but cosine similarity
 (magnitude-focused) still reads as "similar energy overall".
+
+Committed everything so far (repo skeleton through here) as the first git
+commit -- see `git log`.
+
+### Step 4 — Deliverable B: whatsappaudioR package, verified
+
+Ran `devtools::document()` then `devtools::check()` for real (this had
+never been run -- NAMESPACE/man/*.Rd didn't exist yet). Hit two more
+environment gaps, both fixed by installing the missing tool rather than
+skipping the check:
+
+- No Pandoc -- vignette rendering failed. `winget install JohnMacFarlane.Pandoc`
+  (fast, ~20MB). Fixed; vignette now builds.
+- No Rtools -- `R CMD check` itself refuses to run without it on Windows,
+  even though this package has zero compiled code. Installing
+  `winget install RProject.Rtools` (in progress -- see below for outcome).
+
+Installed the package directly (`install.packages("pkg/whatsappaudioR",
+repos = NULL, type = "source")`, since `devtools::install()` wanted `pak`,
+which isn't installed) so it could actually be `library()`'d by
+`api/plumber.R` and `R/06_predict.R`.
+
+**Found and fixed a real, production-breaking bug while building the
+Twilio webhook mock test (Step 7, pulled forward since it surfaced this):**
+`plumber::pr("api/plumber.R")` failed with "cannot open file 'R/utils.R'".
+Root cause: plumber temporarily sets the working directory to the router
+file's own directory (`api/`) while evaluating its top-level code, so a
+plain `source(file.path("R", "utils.R"))` looks for `api/R/utils.R`, which
+doesn't exist. This would have broken the webhook the first time anyone
+actually ran it -- not caught by any earlier step because nothing had
+exercised `api/plumber.R` yet. Fixed in both `api/plumber.R` and
+`R/06_predict.R` (which is `source()`'d from the webhook and has the same
+issue internally) with a small path-resolution helper that tries both the
+plain path and the parent-relative path. Verified: `plumber::pr("api/plumber.R")`
+now parses cleanly and registers both endpoints (`/health`, `/webhook`).
+
+Also hit (and worked around) a second, separate `callr`-serialization issue
+while writing the mock test itself: constructing a Plumber router object in
+the test process and passing it into a `callr::r_bg()` background process
+doesn't survive serialization cleanly (500 errors with no detail). Fixed by
+constructing the router *inside* the background process instead (passing
+only plain strings/scalars across the process boundary). This is a test
+authoring detail, not a bug in the shipped code.
+
+`tests/testthat/test-plumber-webhook.R` (mock Twilio payload -> real local
+plumber server -> TwiML reply, plus a local fake "Twilio media host" server
+to stand in for the Basic-Auth-protected real one) now passes: 5/5
+assertions, covering both the happy path (synthetic audio attachment) and
+the no-media failure path.
+
+**Two more real bugs found by actually inspecting a stray log file** (a
+`api/logs/requests.jsonl` appeared after the "passing" test run -- worth
+noting: it passed 5/5 while masking both of these):
+
+1. Confirmed empirically that plumber's cwd-change to the router's own
+   directory isn't just a parse-time thing -- it holds during actual
+   request handling too. Every relative path in `api/plumber.R`
+   (`REQUEST_LOG_PATH`, `REQUEST_AUDIO_DIR`) and `R/06_predict.R`
+   (`MODEL_PATH`) was resolving against `api/` at request time, not the
+   repo root. Fixed by computing an absolute `.repo_root` once and
+   anchoring every runtime path to it, instead of relative paths resolved
+   lazily. Verified: logs now land at `logs/requests.jsonl`, not
+   `api/logs/requests.jsonl`.
+2. `download_twilio_media()`'s content-type-to-extension `switch()` didn't
+   include `audio/wav` (only ogg/opus/mpeg/amr), so a wav attachment
+   silently got saved as `.bin` and failed to decode -- the test didn't
+   catch this because even a "sorry, couldn't process that audio" reply is
+   still valid TwiML (`<Response><Message>...`), which is all the original
+   assertions checked. Fixed the extension map (added wav/wave/x-wav,
+   mp4/x-m4a) and strengthened the test to explicitly assert decode
+   succeeded, not just "some TwiML came back".
+
+Removed the stray `api/logs/` directory (a symptom of bug #1, not real
+data) before committing.
+
+Ran the full suite again after both fixes: main pipeline (`tests/testthat.R`)
+17 assertions, package (`pkg/whatsappaudioR/tests/testthat`) 21 assertions,
+all passing. `logs/requests.jsonl` now correctly shows `prediction_failed:
+No trained model found` for the happy-path test -- the expected state,
+since Deliverable D (classifier) hasn't been trained yet at this point in
+the run.

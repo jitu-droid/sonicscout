@@ -16,9 +16,21 @@ library(whatsappaudioR)
 library(randomForest)
 library(jsonlite)
 
-source(file.path("R", "utils.R"))
+# WORKAROUND: when this file is source()'d from api/plumber.R, the working
+# directory is plumber's "api/" cwd -- confirmed to hold not just at parse
+# time but during actual request handling too (see BLOCKERS.md). Compute an
+# absolute repo root once, and anchor every path (utils.R, the model file)
+# to it, rather than using plain relative paths that would break depending
+# on which context this file is loaded/called from.
+.repo_root <- normalizePath(
+  if (file.exists(file.path("R", "utils.R"))) "." else ".."
+)
 
-MODEL_PATH <- file.path("models", "classifier.rds")
+if (!exists("ensure_dir", mode = "function")) {
+  source(file.path(.repo_root, "R", "utils.R"))
+}
+
+MODEL_PATH <- file.path(.repo_root, "models", "classifier.rds")
 LOW_CONFIDENCE_THRESHOLD <- 0.4  # tunable; see docs/methodology.md for how this was chosen (or TBD if not yet tuned)
 
 #' Predict the top-3 pest/ambient classes for one audio file.

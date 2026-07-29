@@ -17,12 +17,27 @@ library(httr2)
 library(jsonlite)
 library(whatsappaudioR)
 
-source(file.path("R", "utils.R"))
-source(file.path("R", "06_predict.R"))  # brings in predict_pest(), format_reply()
+# WORKAROUND: plumber runs both this top-level parse block AND every actual
+# request handler with the working directory set to this file's own
+# directory (api/), regardless of where Rscript was invoked from or what
+# cwd was at pr_run() call time -- confirmed empirically (a stray
+# api/logs/requests.jsonl appeared during testing; see BLOCKERS.md). A plain
+# relative path like file.path("logs", "requests.jsonl") therefore resolves
+# to api/logs/requests.jsonl at REQUEST time, not just parse time. Anchor
+# every runtime path to an absolute repo root computed once here, instead
+# of relying on relative paths anywhere below.
+.repo_root <- normalizePath(
+  if (file.exists(file.path("R", "utils.R"))) "." else ".."
+)
+.locate_repo_file <- function(relative_path) file.path(.repo_root, relative_path)
+
+source(.locate_repo_file(file.path("R", "utils.R")))
+source(.locate_repo_file(file.path("R", "06_predict.R")))  # brings in predict_pest(), format_reply()
 
 MIN_CLIP_SECONDS <- 3
-REQUEST_LOG_PATH <- file.path("logs", "requests.jsonl")
-REQUEST_AUDIO_DIR <- file.path("logs", "audio")
+REQUEST_LOG_PATH <- file.path(.repo_root, "logs", "requests.jsonl")
+REQUEST_AUDIO_DIR <- file.path(.repo_root, "logs", "audio")
+MODEL_PATH_ABS <- file.path(.repo_root, "models", "classifier.rds")
 
 # ---- Helpers ----------------------------------------------------------------
 
@@ -54,7 +69,10 @@ download_twilio_media <- function(media_url, content_type) {
 
   ext <- switch(content_type,
     "audio/ogg" = ".ogg", "audio/opus" = ".opus", "audio/mpeg" = ".mp3",
-    "audio/amr" = ".amr", ".bin"
+    "audio/amr" = ".amr",
+    "audio/wav" = , "audio/wave" = , "audio/x-wav" = ".wav",
+    "audio/mp4" = , "audio/x-m4a" = ".m4a",
+    ".bin"
   )
   dest <- tempfile(fileext = ext)
 
@@ -75,7 +93,7 @@ download_twilio_media <- function(media_url, content_type) {
 #* Health check
 #* @get /health
 function() {
-  list(status = "ok", model_present = file.exists(file.path("models", "classifier.rds")))
+  list(status = "ok", model_present = file.exists(MODEL_PATH_ABS))
 }
 
 #* Twilio WhatsApp Sandbox inbound-message webhook.

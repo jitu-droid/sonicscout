@@ -78,8 +78,17 @@ append_manifest <- function(manifest, row) {
   updated
 }
 
+#' Append a blocker entry, unless an entry with the same "what_tried" title
+#' already exists -- avoids spamming BLOCKERS.md with duplicate entries every
+#' time this idempotent script is re-run and hits the same known issue.
 log_blocker <- function(what_tried, error_msg, believed_fix, what_jitu_needs) {
   ensure_dir(dirname(BLOCKERS_PATH))
+  if (file.exists(BLOCKERS_PATH)) {
+    existing <- paste(readLines(BLOCKERS_PATH, warn = FALSE), collapse = "\n")
+    if (grepl(paste0("-- ", what_tried, "\n"), existing, fixed = TRUE)) {
+      return(invisible(NULL))
+    }
+  }
   entry <- paste0(
     "\n## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " -- ", what_tried, "\n\n",
     "**Error:** ", error_msg, "\n\n",
@@ -108,7 +117,7 @@ download_tracked <- function(url, dest_path, source, label, license, manifest_en
 
   ensure_dir(dirname(dest_path))
   ok <- tryCatch({
-    req <- httr2::request(url) |> httr2::req_timeout(300)
+    req <- httr2::request(url) |> httr2::req_timeout(900)
     resp <- httr2::req_perform(req, path = dest_path)
     httr2::resp_status(resp) < 400
   }, error = function(e) {

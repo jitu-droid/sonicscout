@@ -1,0 +1,134 @@
+# SonicScout
+
+A bioacoustic pest early-warning system that uses WhatsApp voice notes as the
+sensor. A smallholder farmer records a 10-30 second voice note of their field
+(typically at night) and sends it to a WhatsApp number. A backend decodes the
+audio, extracts acoustic features, matches them against known pest acoustic
+signatures, and replies with a pest identification plus a confidence score.
+No app install, no IoT hardware, no literacy requirement.
+
+Built in R for an international data science hackathon.
+
+## What's actually novel here
+
+Acoustic insect detection itself is not novel -- it goes back decades
+(Mankin et al. and others were field-testing acoustic fruit-fly detection
+prototypes in the mid-2000s), and FFT/spectrogram/CNN classification of
+insect sounds is well-established. WhatsApp agriculture chatbots also
+already exist, but they're speech-to-text + LLM agronomy advice -- the
+farmer *describes* a problem in words; they don't treat the audio itself as
+sensor data.
+
+**The actual claim:** a method and system for recovering discriminative
+bioacoustic pest signatures from lossy, speech-optimised, VoIP-compressed
+consumer audio, using existing consumer messaging infrastructure as a
+zero-hardware distributed acoustic sensor network. The novelty is in the
+pipeline surviving the compression, and in the delivery mechanism -- not in
+the signal processing math.
+
+## Architecture
+
+```
+Farmer's phone --(WhatsApp voice note, Opus/Ogg, 16kHz, ~16kbps)--> Twilio Sandbox
+                                                                          |
+                                                                          v
+                                                              api/plumber.R webhook
+                                                        (download, decode, log request)
+                                                                          |
+                                                                          v
+                                                    whatsappaudioR::wa_read / wa_features
+                                                                          |
+                                                                          v
+                                                      models/classifier.rds (random forest)
+                                                                          |
+                                                                          v
+                                                    top-3 classes + confidence + low-confidence flag
+                                                                          |
+                                                                          v
+                                              TwiML reply <-- pest ID + confidence + action
+                                                                          |
+                                        dashboard/app.R (Shiny) <-- reads logs/requests.jsonl
+                                          - live/replay view (waveform, spectrogram, confidence)
+                                          - Compression Analysis tab (codec_before_after.png)
+```
+
+Pipeline stages (`R/`), each independently runnable:
+
+| Script | Purpose |
+|---|---|
+| `00_synthetic_corpus.R` | Synthetic ground-truth audio (known frequencies/pests), unblocks everything below without needing real data |
+| `01_download_data.R` | Real data: ESC-50 ambient corpus + xeno-canto target-species clips, capped at 2GB, idempotent |
+| `02_codec_experiment.R` | **Deliverable A** -- measures what WhatsApp's Opus/Ogg compression actually does to pest signatures |
+| `03_preprocess.R` | Resample, trim silence, window, apply the WhatsApp compression simulation to training data (train/serve match) |
+| `04_features.R` | Extract the documented feature set via `whatsappaudioR` |
+| `05_train.R` | Train + evaluate a random forest, grouped by source recording |
+| `06_predict.R` | Single entry point: audio file in, top-3 classes + confidence + low-confidence flag out |
+| `seed_demo_logs.R` | Seed the dashboard's replay mode with real `predict_pest()` output |
+
+## Quickstart
+
+```r
+# 1. Install R packages (renv.lock not yet generated -- see docs/environment.md)
+install.packages(c("tuneR", "seewave", "warbleR", "dplyr", "tidyr", "purrr",
+                    "tibble", "knitr", "ggplot2", "randomForest", "caret",
+                    "plumber", "httr2", "jsonlite", "shiny", "plotly",
+                    "testthat", "roxygen2", "devtools", "zip"))
+
+# 2. Install the whatsappaudioR package (see pkg/whatsappaudioR/)
+install.packages("pkg/whatsappaudioR", repos = NULL, type = "source")
+```
+
+You'll also need a system **FFmpeg** build with `libopus` support on `PATH`
+(`av::av_audio_convert()` segfaults on the reference machine this was built
+on -- see `BLOCKERS.md` -- so every decode/encode path shells out to system
+`ffmpeg` instead).
+
+```bash
+# 3. Run the pipeline end to end (from the repo root)
+Rscript R/00_synthetic_corpus.R    # synthetic ground-truth corpus
+Rscript R/01_download_data.R       # real data (ESC-50 + xeno-canto attempt)
+Rscript R/02_codec_experiment.R    # Deliverable A: codec findings
+Rscript R/03_preprocess.R
+Rscript R/04_features.R
+Rscript R/05_train.R               # trains models/classifier.rds
+Rscript R/seed_demo_logs.R         # seed dashboard replay mode
+
+# 4. Run the demo pieces
+Rscript -e "plumber::pr_run(plumber::pr('api/plumber.R'), port = 8000)"
+Rscript -e "shiny::runApp('dashboard', port = 3838)"
+```
+
+See `docs/twilio_setup.md` for wiring the webhook up to a real Twilio
+WhatsApp Sandbox.
+
+## Data
+
+**InsectSet459** -- 26,399 audio files across 459 species of Orthoptera and
+Cicadidae, curated from xeno-canto, iNaturalist and BioAcoustica. CC-BY-4.0 /
+CC0. Faiss, M. et al. (2025). *InsectSet459: an open dataset of insect
+sounds for bioacoustic machine learning*. arXiv:2503.15074; also published
+in *Scientific Data*. Zenodo: [10.5281/zenodo.18554693](https://zenodo.org/records/18554693).
+
+This dataset's own distribution (three ~16-51GB zips) is too large for this
+project's data-download budget; see `docs/methodology.md` for what data this
+build actually used instead (a synthetic ground-truth corpus + a scoped
+real subset from ESC-50 and xeno-canto directly).
+
+**ESC-50** (ambient/negative class) -- Piczak, K. J. (2015). *ESC: Dataset
+for Environmental Sound Classification*. CC BY-NC 3.0.
+https://github.com/karolpiczak/ESC-50. Note the **NC** (non-commercial)
+term -- fine for this hackathon/research use, but would need revisiting
+before any commercial deployment.
+
+## Licence
+
+MIT for this repository's own code (see the `whatsappaudioR` package's own
+`LICENSE.md` for that package specifically). Third-party data retains its
+own licence -- see above.
+
+## Status and limitations
+
+Read `docs/methodology.md` for the full pipeline write-up, measured
+numbers, and a candid limitations section (the 8kHz ceiling, real-data
+coverage, and more). Read `PROGRESS.md` and `BLOCKERS.md` for the full
+build log, including what's verified by actual execution vs. still open.

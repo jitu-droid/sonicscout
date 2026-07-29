@@ -3,7 +3,49 @@
 Ordered most-urgent first. Each entry: what was tried, the exact error, what
 the fix is believed to be, and what Jitu specifically needs to do.
 
-## URGENT: the `av` R package segfaults on this machine -- routed around, but needs attention
+## 1. No real pest audio yet (needs your judgement call)
+
+**What was tried:** `R/01_download_data.R` queries xeno-canto's API for
+Desert Locust, Migratory Locust, and *Culex* mosquito recordings.
+
+**Error:** All three queries return `HTTP 404 Not Found`. Most likely
+xeno-canto's public API v2 (used here) has been deprecated in favour of v3,
+which requires a registered API key.
+
+**Believed fix:** Register for an xeno-canto API v3 key and update the
+request in `R/01_download_data.R` to use it, or manually download a handful
+of recordings per species from xeno-canto.org and place them under
+`data/raw/xenocanto/<desert_locust|migratory_locust|culex_mosquito>/`.
+
+**What Jitu needs to do:** This is the single biggest gap in the current
+build -- every pest-class number in `docs/classifier_results.md` is
+trained/tested on a **synthetic** ground-truth corpus, not real insect
+recordings. Getting even a handful of real recordings per target species
+(via an xeno-canto API key or manual download) and re-running
+`R/01_download_data.R` -> `R/03_preprocess.R` -> `R/04_features.R` ->
+`R/05_train.R` would be the highest-value next step before presenting any
+performance number as representative of real pests.
+
+## 2. Set up Twilio sandbox and run a live test (needs your Twilio account)
+
+**What was tried:** N/A -- this fundamentally requires an account only you
+can create.
+
+**What's needed:** Follow `docs/twilio_setup.md` end to end: create a Twilio
+account, join the WhatsApp sandbox from your phone, set `TWILIO_ACCOUNT_SID`
+/ `TWILIO_AUTH_TOKEN` in a local `.env` (never commit it), expose
+`api/plumber.R` via a tunnel (e.g. ngrok), point the sandbox webhook at it,
+and send one real WhatsApp voice note through the full path.
+
+**What Jitu needs to do:** Everything in `docs/twilio_setup.md` -- this is
+the one part of the "definition of done" (a real WhatsApp voice note
+returning a correct ID) that cannot be automated without your credentials
+and phone. The webhook itself is verified working end-to-end against a
+mock Twilio payload (`tests/testthat/test-plumber-webhook.R`, 6/6 passing)
+and against the real trained model -- this item is specifically about the
+live/real-Twilio round trip.
+
+## 3. `av` R package segfaults on this machine -- routed around, low urgency now
 
 **What was tried:** Called `av::av_audio_convert()` (a basic wav-to-wav
 conversion, no exotic arguments) and separately `av::av_media_info()`, both
@@ -12,42 +54,30 @@ on a freshly-generated test WAV and, to rule out an input-file issue, on
 (`system.file("samples", "Synapsis-Wonderland.mp3", package = "av")`).
 
 **Error:** All three calls crash the R process outright --
-`Segmentation fault` (exit code 139), not a catchable R error/warning. This
-matters a lot: a segfault cannot be caught with `tryCatch()`, so any code
-path that called into `av` for decode/encode would crash an entire running
-plumber webhook or Shiny session, not just fail one request.
+`Segmentation fault` (exit code 139), not a catchable R error/warning.
 
 **Believed fix:** `av` 0.9.6's CRAN Windows binary is very likely built
 against a different R internals/ABI version than this machine's R 4.6.1
-(4.6.1 is an unusually new R release; binary package builds on CRAN can lag
-behind and segfault when the native code's assumptions about R's C API
-don't match). Rebuilding from source against the actual installed
-R/Rtools should fix it: `install.packages("av", type = "source")` (needs
-Rtools and FFmpeg dev headers/libs available to the build). Alternatively,
-wait for CRAN to publish a binary explicitly built for R 4.6.1, or use an
-older, more widely-supported R version for this project.
+(an unusually new R release). Rebuilding from source
+(`install.packages("av", type = "source")`, needs Rtools) against the
+actual installed R/Rtools should fix it.
 
-**Workaround applied (see `# WORKAROUND:` comments in code):** every place
-that would have called `av::av_audio_convert()` for decoding/encoding now
-shells out to the system `ffmpeg` binary instead (already installed, with
-`libopus` confirmed working -- see `docs/environment.md`). This affects:
-`pkg/whatsappaudioR/R/wa_read.R`, `pkg/whatsappaudioR/R/wa_simulate_compression.R`,
-and `R/02_codec_experiment.R`'s `simulate_whatsapp_compression()`. Functionally
-this should be equivalent or better (ffmpeg is the thing `av` wraps anyway),
-but it does mean `av` is currently an unused dependency in practice --
-consider dropping it from `DESCRIPTION`/`Imports` once the source-rebuild is
-confirmed unnecessary, or keep it and revert to it once fixed (native `av`
-would avoid the process-spawn overhead of shelling out).
+**Workaround applied (see `# WORKAROUND:` comments in code):** every
+decode/encode path shells out to a system `ffmpeg` binary instead
+(confirmed working, with `libopus`) -- `pkg/whatsappaudioR/R/wa_read.R`,
+`pkg/whatsappaudioR/R/wa_simulate_compression.R`, and
+`R/02_codec_experiment.R`'s `simulate_whatsapp_compression()`. This has
+been extensively exercised since (the full pipeline runs on it) and works
+reliably -- this is now an informational entry, not a live risk to the
+demo.
 
-**What Jitu needs to do:** Nothing urgent for the demo -- the ffmpeg
-workaround is in place and should work. If you want to use `av` natively
-(marginally faster, no subprocess spawning), try
-`install.packages("av", type = "source")` when you have a spare few minutes
-and Rtools installed, then re-run `tests/testthat.R` and
-`pkg/whatsappaudioR`'s test suite to confirm it no longer segfaults before
-switching the code back.
+**What Jitu needs to do:** Nothing urgent. If you want `av`'s marginal
+speed benefit (no subprocess spawning) later, try
+`install.packages("av", type = "source")` with Rtools installed, then
+re-run both test suites to confirm it no longer segfaults before switching
+the code back.
 
-## Rtools install failed (winget), needed only for full `R CMD check`
+## 4. Rtools install failed (winget), needed only for full `R CMD check`
 
 **What was tried:** `winget install --id RProject.Rtools -e`.
 
@@ -64,51 +94,3 @@ policy of requiring Rtools regardless of whether a package needs
 compilation). The package installs fine via `install.packages(repos=NULL,
 type="source")` and both test suites pass. Install Rtools yourself only if
 you want the full `devtools::check()` "0 errors/warnings/notes" badge.
-
-## Set up Twilio sandbox and run a live test (needs your Twilio account)
-
-**What was tried:** N/A -- this fundamentally requires an account only you
-can create.
-
-**What's needed:** Follow `docs/twilio_setup.md` end to end: create a Twilio
-account, join the WhatsApp sandbox from your phone, set `TWILIO_ACCOUNT_SID`
-/ `TWILIO_AUTH_TOKEN` in a local `.env` (never commit it), expose
-`api/plumber.R` via a tunnel (e.g. ngrok), point the sandbox webhook at it,
-and send one real WhatsApp voice note through the full path.
-
-**What Jitu needs to do:** Everything in `docs/twilio_setup.md` -- this is
-the one part of the "definition of done" (a real WhatsApp voice note
-returning a correct ID) that cannot be automated without your credentials
-and phone.
-
-## 2026-07-29 19:22 -- Download ESC-50 ambient corpus
-
-**Error:** download_tracked() returned FALSE for the ESC-50 zip (see console output above for the underlying error)
-
-**Believed fix:** Check network access to codeload.github.com, or manually download https://github.com/karolpiczak/ESC-50 and place ESC-50-master.zip at data/raw/esc50/
-
-**What Jitu needs to do:** Nothing required unless the automated download keeps failing -- check BLOCKERS.md history for repeat failures
-
-## 2026-07-29 19:22 -- xeno-canto API query for 'Schistocerca gregaria'
-
-**Error:** Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)
-
-**Believed fix:** May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species
-
-**What Jitu needs to do:** If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for 'Schistocerca gregaria' from xeno-canto.org and place them under data/raw/xenocanto/desert_locust/
-
-## 2026-07-29 19:22 -- xeno-canto API query for 'Locusta migratoria'
-
-**Error:** Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)
-
-**Believed fix:** May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species
-
-**What Jitu needs to do:** If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for 'Locusta migratoria' from xeno-canto.org and place them under data/raw/xenocanto/migratory_locust/
-
-## 2026-07-29 19:22 -- xeno-canto API query for 'gen:Culex'
-
-**Error:** Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)
-
-**Believed fix:** May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species
-
-**What Jitu needs to do:** If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for 'gen:Culex' from xeno-canto.org and place them under data/raw/xenocanto/culex_mosquito/

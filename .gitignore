@@ -1,0 +1,35 @@
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+renv/library/
+renv/staging/
+renv/python/
+renv/sandbox/
+
+# credentials
+.env
+.Renviron
+
+# large / regenerable data (keep dir structure via .gitkeep, not contents)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/codec_experiment/real/*
+!data/codec_experiment/real/.gitkeep
+
+# models are regenerable from 05_train.R but can be large — track via git-lfs or exclude
+models/*.rds
+models/*.rda
+
+# logs contain request payloads
+logs/*.log
+logs/*.jsonl
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.Rproj

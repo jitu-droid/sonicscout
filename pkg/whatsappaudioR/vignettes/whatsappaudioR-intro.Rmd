@@ -1,0 +1,99 @@
+---
+title: "Introduction to whatsappaudioR"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to whatsappaudioR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4
+)
+```
+
+`whatsappaudioR` converts compressed mobile voice notes -- the `.opus`/`.ogg`
+files produced by WhatsApp and similar VoIP messaging apps -- directly into
+tidy data frames ready for analysis. This vignette walks through the core
+path: **voice note -> tidy spectrogram -> plot**.
+
+## Reading a voice note
+
+```{r, eval = FALSE}
+library(whatsappaudioR)
+
+w <- wa_read("voice_note.opus")
+w
+```
+
+`wa_read()` detects the file extension and, for compressed formats, decodes
+via a system `ffmpeg` binary into a `tuneR::Wave` object -- the same
+representation you'd get from `tuneR::readWave()` on a plain `.wav` file, so
+the rest of the R audio ecosystem (`tuneR`, `seewave`) works on it unchanged.
+
+## Tidy spectrogram
+
+```{r, eval = FALSE}
+spec_df <- wa_spectrogram(w, wl = 1024)
+head(spec_df)
+```
+
+```
+#> # A tibble: 6 x 3
+#>    time  freq amplitude
+#>   <dbl> <dbl>     <dbl>
+#> 1 0.032 0.000     -38.2
+#> 2 0.032 0.016     -41.7
+#> ...
+```
+
+`freq` is in kHz (matching `seewave`'s convention); `amplitude` is in dB.
+Because the result is a long-format tibble, it plots directly with
+`ggplot2`:
+
+```{r, eval = FALSE}
+library(ggplot2)
+
+ggplot(spec_df, aes(x = time, y = freq, fill = amplitude)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  labs(x = "Time (s)", y = "Frequency (kHz)", fill = "Amplitude (dB)")
+```
+
+## Spectral features
+
+```{r, eval = FALSE}
+wa_features(w)
+```
+
+Returns a one-row tibble of documented spectral features (peak frequency,
+spectral centroid, flatness, entropy, rolloff, dominant-frequency stability,
+a harmonic-energy heuristic, and 12 MFCCs) -- see `?wa_features` for exact
+definitions. Nothing here is a black box: every column is a named,
+inspectable, conventional bioacoustic/audio feature.
+
+## Simulating compression
+
+If you have clean, uncompressed audio and want to know how it would sound
+(and measure) after passing through a WhatsApp-style pipeline:
+
+```{r, eval = FALSE}
+clean <- wa_read("clean_recording.wav")
+degraded <- wa_simulate_compression(clean, bitrate = 16000, sr = 16000)
+```
+
+This requires a system `ffmpeg` build with `libopus` support.
+
+## Batch processing
+
+```{r, eval = FALSE}
+features_df <- wa_batch("voice_notes/", wa_features)
+```
+
+Applies any function of a `Wave` object (default `wa_features()`) across
+every supported audio file in a directory, returning one row per file with
+a `file` column.

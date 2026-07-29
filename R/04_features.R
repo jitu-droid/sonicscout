@@ -20,11 +20,14 @@ source(file.path("R", "utils.R"))
 WINDOWS_MANIFEST <- file.path("data", "processed", "windows_manifest.csv")
 FEATURES_PATH    <- file.path("data", "processed", "features.csv")
 
-main <- function() {
-  if (!file.exists(WINDOWS_MANIFEST)) {
-    stop(WINDOWS_MANIFEST, " not found -- run R/03_preprocess.R first.")
+#' @param windows_manifest_path,features_path Overridable so
+#'   R/07_compression_delta.R can run this against the "uncompressed"
+#'   condition's windows without touching the default compressed paths.
+main <- function(windows_manifest_path = WINDOWS_MANIFEST, features_path = FEATURES_PATH) {
+  if (!file.exists(windows_manifest_path)) {
+    stop(windows_manifest_path, " not found -- run R/03_preprocess.R first.")
   }
-  windows <- utils::read.csv(WINDOWS_MANIFEST, stringsAsFactors = FALSE)
+  windows <- utils::read.csv(windows_manifest_path, stringsAsFactors = FALSE)
 
   rows <- lapply(seq_len(nrow(windows)), function(i) {
     w <- windows[i, ]
@@ -47,11 +50,11 @@ main <- function() {
 
   features_df <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
 
-  ensure_dir(dirname(FEATURES_PATH))
-  utils::write.csv(features_df, FEATURES_PATH, row.names = FALSE)
+  ensure_dir(dirname(features_path))
+  utils::write.csv(features_df, features_path, row.names = FALSE)
 
   message("Extracted features for ", nrow(features_df), " of ", nrow(windows),
-          " windows. Written to ", FEATURES_PATH)
+          " windows. Written to ", features_path)
   invisible(features_df)
 }
 

@@ -106,6 +106,14 @@ collect_labeled_sources <- function() {
     for (d in species_dirs) {
       dir_label <- basename(d)
       if (dir_label %in% SYNTHETIC_CODEC_ONLY_LABELS) next
+      # Only "synthetic_*" dirs feed the classifier from here. "real_*" dirs
+      # (added by R/prepare_real_reference.R for Deliverable A's codec
+      # experiment) are deliberately skipped -- real audio for the
+      # classifier comes from data/raw/manifest.csv instead (a separate,
+      # larger per-species sample). Without this filter the same real
+      # species would be double-counted under two different data_origin
+      # labels.
+      if (!startsWith(dir_label, "synthetic_")) next
       files <- list.files(d, pattern = "\\.wav$", full.names = TRUE)
       if (length(files) == 0) next
       # synthetic_broadband_noise is documented (R/00_synthetic_corpus.R) as
@@ -183,25 +191,48 @@ window_signal <- function(x, sr, window_s = WINDOW_SECONDS, hop_s = HOP_SECONDS)
 
 # ---- Main per-file pipeline ---------------------------------------------------
 
-#' Process one source file end to end: read -> compress (WhatsApp sim) ->
-#' trim silence -> window -> write each window as its own WAV. Returns a
-#' data frame of manifest rows for the windows it wrote (zero rows if the
-#' file couldn't be processed, logged rather than raised).
-process_one_file <- function(path, label, subcategory, data_origin) {
+#' Resample/downmix to WhatsApp's sample rate via ffmpeg WITHOUT the Opus
+#' round-trip -- i.e. the "uncompressed" condition for the compressed-vs-
+#' uncompressed comparison (R/07_compression_delta.R). Sample rate is kept
+#' matched to the compressed condition deliberately, so the *only*
+#' difference between the two conditions is the lossy codec itself, not a
+#' confounding sample-rate change.
+resample_mono_only <- function(input_path, output_wav, sample_rate = WHATSAPP_SAMPLE_RATE) {
+  ffmpeg_bin <- Sys.which("ffmpeg")
+  if (ffmpeg_bin == "") stop("ffmpeg not found on PATH")
+  ensure_dir(dirname(output_wav))
+  status <- system2(ffmpeg_bin, args = c("-y", "-loglevel", "error", "-i", input_path,
+                                          "-ar", as.character(sample_rate), "-ac", "1", output_wav))
+  if (status != 0) stop("ffmpeg failed to resample ", input_path)
+  invisible(output_wav)
+}
+
+#' Process one source file end to end: read -> compress (WhatsApp sim, or
+#' just resample if apply_compression = FALSE) -> trim silence -> window ->
+#' write each window as its own WAV. Returns a data frame of manifest rows
+#' for the windows it wrote (zero rows if the file couldn't be processed,
+#' logged rather than raised).
+process_one_file <- function(path, label, subcategory, data_origin,
+                              apply_compression = TRUE, processed_dir = PROCESSED_DIR) {
   result <- tryCatch({
-    # simulate_whatsapp_compression() shells out to ffmpeg with `-i path`,
-    # which is format-agnostic (mp3/ogg/wav/...), so there's no need to read
-    # the original file in R first -- and for xeno-canto's .mp3 sources,
-    # tuneR::readWave() would fail outright since it only parses WAV.
+    # Both simulate_whatsapp_compression() and resample_mono_only() shell
+    # out to ffmpeg with `-i path`, which is format-agnostic (mp3/ogg/wav/
+    # ...), so there's no need to read the original file in R first -- and
+    # for .mp3 sources, tuneR::readWave() would fail outright since it only
+    # parses WAV.
     tmp_degraded <- tempfile(fileext = ".wav")
     on.exit(unlink(tmp_degraded), add = TRUE)
-    simulate_whatsapp_compression(path, tmp_degraded)
+    if (apply_compression) {
+      simulate_whatsapp_compression(path, tmp_degraded)
+    } else {
+      resample_mono_only(path, tmp_degraded)
+    }
     degraded <- tuneR::readWave(tmp_degraded)
 
     windows <- window_signal(trim_silence(degraded@left, degraded@samp.rate), degraded@samp.rate)
 
     stem <- tools::file_path_sans_ext(basename(path))
-    out_dir <- file.path(PROCESSED_DIR, label)
+    out_dir <- file.path(processed_dir, label)
     ensure_dir(out_dir)
 
     manifest_rows <- vector("list", length(windows))
@@ -232,21 +263,29 @@ process_one_file <- function(path, label, subcategory, data_origin) {
   }
 }
 
-main <- function() {
+#' @param apply_compression When FALSE, produces the "uncompressed" condition
+#'   for R/07_compression_delta.R (resampled to the same 16kHz mono, but no
+#'   Opus round-trip) -- otherwise identical to the normal (compressed)
+#'   pipeline. Always TRUE for the default `Rscript R/03_preprocess.R`
+#'   invocation; the delta script calls this function directly with FALSE.
+main <- function(apply_compression = TRUE, processed_dir = PROCESSED_DIR,
+                  windows_manifest_path = WINDOWS_MANIFEST) {
   sources <- collect_labeled_sources()
   message("Preprocessing ", nrow(sources), " source files across ",
           length(unique(sources$label)), " labels: ",
-          paste(unique(sources$label), collapse = ", "))
+          paste(unique(sources$label), collapse = ", "),
+          if (!apply_compression) " (UNCOMPRESSED condition)" else "")
 
   all_windows <- do.call(rbind, lapply(seq_len(nrow(sources)), function(i) {
-    process_one_file(sources$path[i], sources$label[i], sources$subcategory[i], sources$data_origin[i])
+    process_one_file(sources$path[i], sources$label[i], sources$subcategory[i], sources$data_origin[i],
+                      apply_compression = apply_compression, processed_dir = processed_dir)
   }))
 
-  ensure_dir(PROCESSED_DIR)
-  utils::write.csv(all_windows, WINDOWS_MANIFEST, row.names = FALSE)
+  ensure_dir(processed_dir)
+  utils::write.csv(all_windows, windows_manifest_path, row.names = FALSE)
 
   message("Wrote ", nrow(all_windows), " windows from ", nrow(sources),
-          " source files to ", PROCESSED_DIR, ". Manifest: ", WINDOWS_MANIFEST)
+          " source files to ", processed_dir, ". Manifest: ", windows_manifest_path)
   invisible(all_windows)
 }
 

@@ -1,20 +1,29 @@
 # Deliverable C -- Data pipeline, step 1: fetch a scoped real-data corpus.
 #
-# InsectSet459 itself (Zenodo record 10.5281/zenodo.18554693) only distributes
-# as three monolithic zips (Train.zip 51.2GB, Validation.zip 16.4GB,
-# Test.zip 16.0GB -- 83.7GB total). That is far over our 2GB download cap and
-# there is no per-species download option on Zenodo for this record. Per the
-# brief's own fallback instruction, this script pulls a small real-audio
-# corpus directly from the original sources instead:
+# InsectSet459 itself (Zenodo record 10.5281/zenodo.18554693, concept DOI
+# 10.5281/zenodo.14056457) only distributes as three monolithic zips
+# (Train.zip 51.2GB, Validation.zip 16.4GB, Test.zip 16.0GB -- 83.7GB total,
+# and note even the *smallest* split alone is 16.4GB, nowhere near our 2GB
+# cap despite that being the plan). Confirmed via a HEAD/Range request that
+# Zenodo's storage does support byte-range requests (206 Partial Content),
+# so partial in-zip extraction was technically possible -- but turned out
+# to be unnecessary: the annotation CSV's `file` column links directly to
+# each recording's original source file on iNaturalist (all 12,915 rows in
+# the CSV resolve to static.inaturalist.org), so we can fetch exactly the
+# files we want directly from their original public URLs without touching
+# the zips at all. xeno-canto is NOT used here (abandoned per instruction --
+# its public API v2 returns HTTP 404 on every query, most likely because
+# it's deprecated in favour of v3, which needs a registered key; not worth
+# the time for what direct-URL access via InsectSet459's own CSV already
+# solves better).
 #
-#   - Target-species Orthoptera recordings from xeno-canto (which added
-#     grasshopper/cricket coverage alongside its original bird archive).
-#   - The ambient/negative class from ESC-50 (github.com/karolpiczak/ESC-50),
-#     a single ~600MB zip, CC BY-NC 3.0.
+# Ambient/negative class: ESC-50 (github.com/karolpiczak/ESC-50), a single
+# ~600MB zip, CC BY-NC 3.0.
 #
 # Idempotent: re-running skips files already recorded in the manifest with
 # their bytes intact. Respects a 2GB total download cap across everything
-# this script downloads (tracked via the manifest, not just this run).
+# this script downloads (tracked via the manifest, not just this run) --
+# though in practice this real-audio approach uses well under 100MB.
 #
 # Usage:
 #   Rscript R/01_download_data.R
@@ -43,19 +52,30 @@ AMBIENT_CATEGORIES <- c(
   "chirping_birds", "car_horn", "airplane"
 )
 
-# Target pest species to search on xeno-canto. Each entry: scientific name
-# used in the API query, and a short label for our directory/species naming.
-# Mosquito (Culicidae/Diptera) is included speculatively -- xeno-canto's
-# insect expansion is documented as covering Orthoptera (grasshoppers/
-# crickets); whether it also carries mosquito recordings is unverified as of
-# writing this script. If the query returns zero results, that is logged,
-# not treated as an error.
-XC_TARGET_SPECIES <- list(
-  list(query = "Schistocerca gregaria", label = "desert_locust"),
-  list(query = "Locusta migratoria", label = "migratory_locust"),
-  list(query = "gen:Culex", label = "culex_mosquito")
+# InsectSet459 metadata (small CSV, not the multi-GB zips -- see header note).
+INSECTSET459_CSV_URL <- "https://zenodo.org/records/18554693/files/InsectSet459_Train_Val_Test_Annotation.csv?download=1"
+INSECTSET459_ZENODO_RECORD_URL <- "https://zenodo.org/records/18554693"
+
+# Target species: Orthoptera grasshoppers (Acrididae -- the closest real
+# taxonomic proxy to locust/grasshopper pest relevance in this dataset;
+# InsectSet459 doesn't include Schistocerca/Locusta specifically) first,
+# Cicadidae as a secondary real acoustic category to discriminate against
+# (loud, distinctive, per the run instructions). Species chosen for having
+# reasonable representation in the annotation CSV (checked empirically --
+# see PROGRESS.md).
+INSECTSET459_TARGET_SPECIES <- list(
+  list(species = "Chorthippus_biguttulus", label = "chorthippus_biguttulus", group = "Orthoptera"),
+  list(species = "Chorthippus_brunneus",   label = "chorthippus_brunneus",   group = "Orthoptera"),
+  list(species = "Cicada_orni",            label = "cicada_orni",           group = "Cicadidae")
 )
-XC_MAX_FILES_PER_SPECIES <- 8
+# Raised from 20 -> 30 (Prompt 5, Step 2c): 40 source files across 3 species
+# was thin for a grouped split. Individual downloads also get a longer
+# per-file timeout than the 60s default here (see fetch_insectset459) --
+# the first pass's 60s timeout left some attempts short on a slow
+# connection (~0.5MB/s observed); idempotency means re-running only
+# retries what's still missing, it doesn't re-fetch what already succeeded.
+INSECTSET459_MAX_FILES_PER_SPECIES <- 30
+INSECTSET459_TIMEOUT_S <- 120
 
 # ---- Manifest -----------------------------------------------------------
 
@@ -104,7 +124,13 @@ log_blocker <- function(what_tried, error_msg, believed_fix, what_jitu_needs) {
 #' Download a file if not already present in the manifest, respecting the
 #' global byte cap. Returns TRUE if the file exists on disk afterwards
 #' (whether freshly downloaded or already cached), FALSE if skipped/failed.
-download_tracked <- function(url, dest_path, source, label, license, manifest_env) {
+#'
+#' @param timeout_s Per-request timeout. Defaults short (60s) since most
+#'   calls here are small individual audio files; a hung connection to one
+#'   file should fail fast, not block the whole run for up to 30 minutes.
+#'   Pass a larger value explicitly for genuinely large archives (e.g. the
+#'   ESC-50 zip, which needs ~30 min on this connection's ~0.5MB/s).
+download_tracked <- function(url, dest_path, source, label, license, manifest_env, timeout_s = 60) {
   if (file.exists(dest_path)) {
     return(TRUE)  # idempotent: trust an already-downloaded file
   }
@@ -115,13 +141,14 @@ download_tracked <- function(url, dest_path, source, label, license, manifest_en
     return(FALSE)
   }
 
+  message("  downloading ", url, " -> ", dest_path, " ...")
   ensure_dir(dirname(dest_path))
   ok <- tryCatch({
-    req <- httr2::request(url) |> httr2::req_timeout(1800)
+    req <- httr2::request(url) |> httr2::req_timeout(timeout_s)
     resp <- httr2::req_perform(req, path = dest_path)
     httr2::resp_status(resp) < 400
   }, error = function(e) {
-    message("Download failed for ", url, ": ", conditionMessage(e))
+    message("  FAILED: ", url, ": ", conditionMessage(e))
     FALSE
   })
 
@@ -147,7 +174,7 @@ fetch_esc50 <- function(manifest_env) {
   extract_dir <- file.path(RAW_DIR, "esc50", "ESC-50-master")
 
   ok <- download_tracked(ESC50_ZIP_URL, zip_path, "ESC-50", "ambient_corpus",
-                          ESC50_LICENSE, manifest_env)
+                          ESC50_LICENSE, manifest_env, timeout_s = 1800)
   if (!ok && !file.exists(zip_path)) {
     log_blocker(
       "Download ESC-50 ambient corpus",
@@ -192,65 +219,67 @@ fetch_esc50 <- function(manifest_env) {
   invisible(kept)
 }
 
-# ---- xeno-canto (target pest species) ------------------------------------
+# ---- InsectSet459 (real target-species audio, direct source URLs) --------
 
-fetch_xenocanto_species <- function(target, manifest_env) {
-  api_url <- paste0("https://xeno-canto.org/api/2/recordings?query=",
-                     utils::URLencode(target$query, reserved = TRUE))
+#' Fetch the InsectSet459 annotation CSV (small, ~6.9MB metadata file --
+#' NOT one of the multi-GB audio zips) and, for each target species, sample
+#' up to INSECTSET459_MAX_FILES_PER_SPECIES recordings and download them
+#' directly from their original iNaturalist source URL (the CSV's `file`
+#' column), bypassing the zips entirely.
+fetch_insectset459 <- function(manifest_env) {
+  csv_path <- file.path(RAW_DIR, "insectset459", "annotation.csv")
+  ok <- download_tracked(INSECTSET459_CSV_URL, csv_path, "InsectSet459-meta",
+                          "annotation_csv", "CC-BY-4.0", manifest_env)
+  if (!ok && !file.exists(csv_path)) {
+    log_blocker(
+      "Download InsectSet459 annotation CSV",
+      "download_tracked() returned FALSE for the annotation CSV (see console output above)",
+      paste0("Check network access to zenodo.org, or manually download ", INSECTSET459_CSV_URL,
+             " and place it at ", csv_path),
+      "Nothing required unless the automated download keeps failing"
+    )
+    return(invisible(NULL))
+  }
 
-  parsed <- tryCatch({
-    resp <- httr2::request(api_url) |> httr2::req_timeout(60) |> httr2::req_perform()
-    ctype <- httr2::resp_content_type(resp)
-    if (!grepl("json", ctype, ignore.case = TRUE)) {
-      stop("Expected JSON, got content-type '", ctype, "' -- likely a bot-check/HTML block page, not the API")
+  annotation <- utils::read.csv(csv_path, stringsAsFactors = FALSE)
+
+  for (target in INSECTSET459_TARGET_SPECIES) {
+    sub_df <- annotation[annotation$species_name == target$species, ]
+    if (nrow(sub_df) == 0) {
+      log_blocker(
+        paste0("InsectSet459 species coverage for '", target$species, "'"),
+        "Annotation CSV has zero rows for this species_name",
+        "Species name may not match the CSV's naming convention (underscored binomial) -- check InsectSet459_Train_Val_Test_Annotation.csv directly",
+        paste0("Pick a different target species from the CSV's species_name column, or accept synthetic-only coverage for this class")
+      )
+      next
     }
-    jsonlite::fromJSON(httr2::resp_body_string(resp))
-  }, error = function(e) {
-    message("xeno-canto query failed for ", target$query, ": ", conditionMessage(e))
-    NULL
-  })
 
-  if (is.null(parsed)) {
-    log_blocker(
-      paste0("xeno-canto API query for '", target$query, "'"),
-      "Request failed or returned non-JSON (possibly an anti-bot block page -- xeno-canto is known to run bot protection that can reject non-browser requests)",
-      "May need a registered API key (xeno-canto API v3 requires one), a different User-Agent, or manual browser-based download of a handful of clips for this species",
-      paste0("If this species has zero downloaded clips in data/raw/manifest.csv, either get an xeno-canto API key and update R/01_download_data.R, or manually download ~5 recordings for '", target$query, "' from xeno-canto.org and place them under data/raw/xenocanto/", target$label, "/")
-    )
-    return(invisible(NULL))
+    set.seed(20260729)
+    take_idx <- if (nrow(sub_df) > INSECTSET459_MAX_FILES_PER_SPECIES) {
+      sample(seq_len(nrow(sub_df)), INSECTSET459_MAX_FILES_PER_SPECIES)
+    } else {
+      seq_len(nrow(sub_df))
+    }
+
+    dest_dir <- file.path(RAW_DIR, "insectset459", target$label)
+    n_ok <- 0
+    for (i in take_idx) {
+      row <- sub_df[i, ]
+      file_url <- row$file
+      if (is.na(file_url) || file_url == "") next
+      dest_path <- file.path(dest_dir, row$file_name)
+      if (download_tracked(file_url, dest_path, "InsectSet459", target$label, row$license, manifest_env,
+                            timeout_s = INSECTSET459_TIMEOUT_S)) {
+        n_ok <- n_ok + 1
+      }
+    }
+
+    message("InsectSet459 '", target$species, "': downloaded ", n_ok, " of ",
+            length(take_idx), " attempted (", nrow(sub_df), " available in the CSV).")
   }
 
-  n_found <- suppressWarnings(as.integer(parsed$numRecordings))
-  if (is.na(n_found) || n_found == 0 || is.null(parsed$recordings) || length(parsed$recordings) == 0) {
-    log_blocker(
-      paste0("xeno-canto species coverage for '", target$query, "'"),
-      "API responded but returned zero recordings for this query",
-      "xeno-canto's Orthoptera/insect coverage may not include this species, or the query syntax needs adjusting",
-      paste0("Confirm whether '", target$query, "' has any recordings on xeno-canto.org manually; if not, the synthetic corpus (R/00_synthetic_corpus.R) is this species' only reference audio for now")
-    )
-    return(invisible(NULL))
-  }
-
-  recs <- parsed$recordings
-  n_take <- min(XC_MAX_FILES_PER_SPECIES, nrow(recs))
-  taken <- recs[seq_len(n_take), ]
-
-  dest_dir <- file.path(RAW_DIR, "xenocanto", target$label)
-  for (i in seq_len(nrow(taken))) {
-    rec <- taken[i, ]
-    file_url <- rec$file
-    if (is.null(file_url) || is.na(file_url) || file_url == "") next
-    ext <- tools::file_ext(rec[["file-name"]])
-    if (is.na(ext) || ext == "") ext <- "mp3"
-    dest_path <- file.path(dest_dir, paste0(target$label, "_", rec$id, ".", ext))
-
-    license_url <- if (!is.null(rec$lic)) rec$lic else "unknown -- check recording page on xeno-canto.org"
-    download_tracked(file_url, dest_path, "xeno-canto", target$label, license_url, manifest_env)
-  }
-
-  message("xeno-canto '", target$query, "': attempted ", nrow(taken), " of ",
-          n_found, " available recordings.")
-  invisible(taken)
+  invisible(annotation)
 }
 
 # ---- Entry point ----------------------------------------------------------
@@ -260,10 +289,7 @@ main <- function() {
   manifest_env$manifest <- read_manifest()
 
   fetch_esc50(manifest_env)
-
-  for (target in XC_TARGET_SPECIES) {
-    fetch_xenocanto_species(target, manifest_env)
-  }
+  fetch_insectset459(manifest_env)
 
   total_bytes <- sum(manifest_env$manifest$bytes, na.rm = TRUE)
   message(sprintf("Done. Manifest has %d entries, %.1f MB total (cap: %.0f MB).",

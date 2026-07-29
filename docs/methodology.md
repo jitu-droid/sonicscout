@@ -55,10 +55,14 @@ real numbers from an actual Opus/Ogg round-trip, not estimates):
 - A chewing-pulse-train analogue deliberately spanning across the 8kHz
   wall (broadband noise bursts, 2-12kHz) scores 0.924 overall but -- as
   expected by construction -- has essentially zero retention in its
-  above-8kHz component specifically. This is consistent with the brief's
-  flagged uncertainty about lepidopteran larval chewing sounds: **the part
-  of a chewing signal that extends above 8kHz cannot survive; only the
-  sub-8kHz portion does.**
+  above-8kHz component specifically. **CORRECTION: this is not a chewing-
+  sound finding.** It was measured on a synthetic amplitude-modulated noise
+  pulse train built to resemble the general *shape* of a chewing signal
+  (bursty, broadband) -- not on any actual recording of an insect chewing
+  or feeding. Whether real larval chewing/feeding sounds survive the 8kHz
+  ceiling was, as of the previous run, still completely unknown, and this
+  bullet should never have been read as answering that question. See
+  "Real chewing-sound findings" below for what's actually measured now.
 - Broadband noise scores lower on Pearson correlation (0.249) than cosine
   similarity (0.967) -- expected for noise-like signals, where correlation
   is a poor shape descriptor but magnitude similarity still reads as
@@ -102,28 +106,32 @@ budget. What was actually used instead:
   corpus only; the ambient/negative class is the only real audio in the
   training set.
 
-## Classifier results (Deliverable D)
+## Classifier results (Deliverable D) -- CORRECTED FRAMING, see below
 
-Real numbers from an actual train/test run, in
-`docs/classifier_results.md` (regenerated fresh on every run of
-`R/05_train.R`). Current run: 94 source files (70 real ESC-50 ambient + 24
-synthetic pest), 300 windows, split 56 train / 18 val / 20 test source
-files, grouped so no source recording straddles the split (asserted in
-code, not just assumed).
+**This section's headline number from the previous run was weaker than it
+read, and is corrected here rather than quietly dropped.** The "0%
+false-positive rate against ambient" reported previously was measured by
+separating **synthetic, parametrically-generated harmonic tone stacks**
+from **real ESC-50 ambient recordings**. Those two classes differ in far
+more ways than "pest vs. not" -- synthetic tones are noiseless, perfectly
+periodic, studio-clean signals; ESC-50 clips are real-world recordings with
+real microphone noise floors, room tone, and recording-chain artifacts. A
+classifier separating them is very likely picking up on *recording
+conditions* (synthetic-generation artifacts vs. real-world recording
+artifacts), not necessarily on the acoustic pest signature itself. **That 0% number
+should not have been presented as evidence the system can tell a real pest
+from real ambient noise -- it hadn't been tested on that question at all.**
+This is exactly the kind of trivial-separation result that inflates
+reported performance without being wrong on its own terms; it needed
+naming, not just a caveat buried in limitations.
 
-- Pest classes (chewing-pulse analogue, mosquito-wingbeat analogue,
-  stridulation analogue) all classify perfectly on held-out test windows
-  (precision and recall 1.0 each -- small n, 2 test windows per class).
-- The noisiest pest variant (tone+noise at low/negative SNR) has **0
-  recall** -- every one of its test windows was misclassified as ambient.
-- **False-positive rate against the real ambient class: 0%.** No true
-  ambient test window was ever misclassified as a pest.
-
-Read together: the model never cries wolf on real ambient/environmental
-sound, at the cost of missing the hardest, noisiest pest signal variant
-entirely. That is a defensible tradeoff for a farmer-facing alert system
-(false alarms erode trust fast), but it means low-SNR field conditions are
-this model's current weak point, not a solved problem.
+Real (InsectSet459) vs. real (ESC-50) results, which actually test the
+question, are in `docs/classifier_results.md` (regenerated fresh by
+`R/05_train.R`) -- see the numbers there, expected to be substantially
+weaker than the synthetic-vs-real run, and reported as measured either way.
+The synthetic-only numbers from the previous run are retained separately
+in this document's history (see `PROGRESS.md`) for comparison, clearly
+labelled as synthetic-vs-real and not a real-pest-detection result.
 
 ## Limitations (read this before quoting any number above)
 

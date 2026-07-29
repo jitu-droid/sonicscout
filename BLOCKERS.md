@@ -45,37 +45,44 @@ mock Twilio payload (`tests/testthat/test-plumber-webhook.R`, 6/6 passing)
 and against the real trained model -- this item is specifically about the
 live/real-Twilio round trip.
 
-## 3. `av` R package segfaults on this machine -- routed around, low urgency now
+## 3. CORRECTED: `av` does NOT actually segfault -- earlier entry was wrong
 
-**What was tried:** Called `av::av_audio_convert()` (a basic wav-to-wav
-conversion, no exotic arguments) and separately `av::av_media_info()`, both
-on a freshly-generated test WAV and, to rule out an input-file issue, on
-`av`'s own bundled sample file
-(`system.file("samples", "Synapsis-Wonderland.mp3", package = "av")`).
+**Original claim (now retracted):** an earlier session reported
+`av::av_audio_convert()` and `av::av_media_info()` crashing the R process
+outright (segfault, exit 139) on this machine, including on `av`'s own
+bundled sample file, and concluded the installed binary was ABI-incompatible
+with this R version.
 
-**Error:** All three calls crash the R process outright --
-`Segmentation fault` (exit code 139), not a catchable R error/warning.
+**Re-tested and retracted.** `av` had since been dropped from every file
+that used to `library(av)` (the codebase now routes decode/encode through
+system `ffmpeg` instead), so it wasn't even installed in the current `renv`
+project library. Reinstalled it (`install.packages("av")`) purely to
+re-test Prompt 5's hypothesis, and ran the exact same calls
+(`av::av_media_info()` on `av`'s own bundled sample file,
+`av::av_audio_convert()` on a fresh test WAV) both from a script file and
+via a single-line `Rscript -e "..."` call. **Both succeeded cleanly, every
+time, no crash.** The original segfaults were most likely an artifact of
+how a *multi-line* inline `-e` string was being passed from bash to
+`Rscript.exe` in that earlier session (several other unrelated segfaults
+in that same session also happened only with multi-line inline `-e`
+scripts and disappeared when the identical logic was run from a `.R` file
+or a single-line `-e` call) -- not a real `av`/R-ABI incompatibility.
 
-**Believed fix:** `av` 0.9.6's CRAN Windows binary is very likely built
-against a different R internals/ABI version than this machine's R 4.6.1
-(an unusually new R release). Rebuilding from source
-(`install.packages("av", type = "source")`, needs Rtools) against the
-actual installed R/Rtools should fix it.
+**Correction:** `av` is not broken on this machine. The earlier "believed
+fix" (rebuild from source against Rtools) was chasing a problem that
+doesn't exist.
 
-**Workaround applied (see `# WORKAROUND:` comments in code):** every
-decode/encode path shells out to a system `ffmpeg` binary instead
-(confirmed working, with `libopus`) -- `pkg/whatsappaudioR/R/wa_read.R`,
-`pkg/whatsappaudioR/R/wa_simulate_compression.R`, and
-`R/02_codec_experiment.R`'s `simulate_whatsapp_compression()`. This has
-been extensively exercised since (the full pipeline runs on it) and works
-reliably -- this is now an informational entry, not a live risk to the
-demo.
-
-**What Jitu needs to do:** Nothing urgent. If you want `av`'s marginal
-speed benefit (no subprocess spawning) later, try
-`install.packages("av", type = "source")` with Rtools installed, then
-re-run both test suites to confirm it no longer segfaults before switching
-the code back.
+**What Jitu needs to do:** Nothing. The ffmpeg-based workaround already in
+the code (`pkg/whatsappaudioR/R/wa_read.R`,
+`pkg/whatsappaudioR/R/wa_simulate_compression.R`,
+`R/02_codec_experiment.R`'s `simulate_whatsapp_compression()`) is still
+reasonable to keep -- it works reliably and avoids `av` as a dependency for
+the package/pipeline -- but there is no outstanding bug forcing that choice
+if a future session ever wants to switch back to `av` for its marginal
+speed benefit (no subprocess spawning). General lesson for future sessions
+on this machine: avoid multi-line inline `Rscript -e "..."` calls for
+anything non-trivial; write to a script file instead, or keep `-e` calls to
+a single line.
 
 ## 4. Rtools install failed (winget), needed only for full `R CMD check`
 

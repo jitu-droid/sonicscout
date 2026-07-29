@@ -90,6 +90,107 @@ de-risk this.
 Running log, most recent entry at the top of each session block. Times are
 local machine time.
 
+## Session 3 — Prompt 4 (real-audio validation) + Prompt 5 (resume after session death)
+
+**Session-death note:** the session running Prompt 4 died mid-run without
+committing anything or updating this file or `BLOCKERS.md`. Prompt 5's
+"resume" instructions described the expected disk state; per its own Step 0
+("trust the disk, not this document"), reconciled that description against
+what was actually on disk before proceeding. Findings: the description was
+accurate for code and data (01_download_data.R rewritten, prepare_real_reference.R
+and R/fetch_chewing_sounds.R present, real InsectSet459 + USDA chewing data
+downloaded, codec experiment re-run on real recordings, R/07_compression_delta.R
+written but never executed) -- but PROGRESS.md and BLOCKERS.md themselves had
+**zero** entries from that session, and nothing had been committed (still sitting
+at commit `4224474`, the end of Prompt 3). The codec-findings interpretation
+that Prompt 5 assumed might be "incomplete" was actually already fully written
+on disk (survived because it was a plain file edit, not something requiring
+graceful shutdown). Logging this discrepancy per Step 0's instruction: **trust
+what's on disk, not a prior session's self-description, when the two conflict**
+-- this session's own summary further below is written with that same caution
+in mind for whoever reads it next.
+
+### Prompt 5 Step 2(d) -- `av` blocker corrected, not just re-verified
+
+Re-tested `av::av_audio_convert()`/`av::av_media_info()` (the exact repro from
+the original "segfault" report, including `av`'s own bundled sample file) both
+from a script file and via a single-line `Rscript -e`. **Both succeeded
+cleanly, no crash.** `av` had been dropped from the codebase's dependencies
+since the original report (routed through system ffmpeg instead), so it
+wasn't even installed under the active `renv` library -- reinstalled it
+purely to re-test. Corrected `BLOCKERS.md` #3: the original segfault was very
+likely an artifact of how a *multi-line* inline `Rscript -e` string was being
+passed from bash in that earlier session (consistent with other unrelated
+segfaults in that same session that also only occurred with multi-line
+inline `-e` and disappeared when run from a `.R` file), not a real
+`av`/R-ABI incompatibility. Retracted the "rebuild from source" recommendation
+since there's nothing to fix.
+
+### Prompt 5 Step 2(a) -- USDA chewing-recording capture method: contact sensors, not microphones
+
+Fetched the USDA-ARS source page (ars.usda.gov/ARSUserFiles/3559/soundlibrary.html)
+directly rather than inferring from filenames alone (though the filenames --
+`piez*`, `pvdf*`, `accel*` -- had already strongly hinted at this). **Confirmed:
+every single chewing/feeding recording in the corpus was captured with a
+contact/vibration sensor** -- Bruel & Kjaer accelerometer, piezoelectric disk
+sensor, PVDF film sensor, 30/40kHz ultrasonic contact sensor, or "soil
+microphone" (ground-contact, not air) -- never an open-air microphone. Full
+per-file sensor table and the consequence (the survivability numbers are a
+**ceiling result** -- best-case clean-capture survivability, not evidence of
+what a farmer's phone at distance would pick up) written into
+`docs/codec_findings.md`'s interpretation section.
+
+### Prompt 5 Step 2(b) -- proxy-species language sweep
+
+Swept `README.md`, `docs/methodology.md`, `docs/codec_findings.md`,
+`dashboard/app.R`, `R/00_synthetic_corpus.R`, `R/seed_demo_logs.R`,
+`api/plumber.R` for "locust"/"Schistocerca"/"Desert Locust"/"Migratory
+Locust" language. Found only two stale mentions, both in
+`docs/methodology.md`'s "Data sources actually used" section (which
+predates the InsectSet459 pivot and needs a full rewrite regardless --
+done as part of this session's documentation pass, see below).
+`R/01_download_data.R`'s own comments were already correctly hedged
+("closest taxonomic proxy... doesn't include Schistocerca/Locusta
+specifically"). Added explicit proxy-species language to
+`docs/codec_findings.md`'s interpretation.
+
+### Prompt 5 Step 2(c) -- deepened the real-audio corpus
+
+The first pass's 60s-per-file timeout under-filled two of three InsectSet459
+species (12/20 for *C. biguttulus*, 8/20 for *C. brunneus* -- *Cicada orni*
+had already filled 20/20). Raised `INSECTSET459_MAX_FILES_PER_SPECIES`
+20 -> 30 and gave InsectSet459 downloads their own 120s timeout (up from the
+60s default, which is still used for ESC-50's per-file... no, ESC-50 is one
+big zip with its own 1800s timeout; 60s remains the sensible default for
+typical small individual files). Re-ran, idempotent (already-downloaded files
+skipped, so this only filled gaps + added new ones). Found mid-run that some
+target-species rows in the InsectSet459 CSV point to **xeno-canto.org**, not
+just `static.inaturalist.org` as an earlier session's domain check had found
+(that check was apparently done on a smaller/different row sample, or before
+`MAX_FILES_PER_SPECIES` was raised -- either way, not literally 100%
+iNaturalist as previously stated). Some xeno-canto-hosted files are far
+larger (100-170MB+, presumably uncompressed originals) than iNaturalist's
+typically-compressed clips, causing several new 120s timeouts on this
+connection -- expected and handled the same way as before (failed download,
+not fatal, just skipped). **Result: 22 (*C. biguttulus*) + 17
+(*C. brunneus*) + 20 (*Cicada orni*) = 59 real InsectSet459 files, up from
+40.** Manifest total 2152MB (essentially at the 2GB/2147MB cap now -- no
+further InsectSet459 downloads should be attempted without either raising
+the cap or pruning something else first).
+
+Re-ran `R/prepare_real_reference.R` after the deeper download as instructed.
+Found and fixed a small consistency bug while doing so: the script picks its
+codec-experiment sample as `head(sort(files), 5)`, and doesn't clean up a
+species' previously-selected files when the underlying raw corpus changes --
+so after the deeper download, *C. biguttulus*'s reference dir had 7 files
+(2 stale + 5 new-selection) instead of the intended 5, since alphabetical
+sort order shifted with new files added. Cleared and regenerated fresh to
+restore the documented 5-per-species sample size, then re-ran
+`R/02_codec_experiment.R`. **Numbers barely moved** (*C. biguttulus*
+survivability 0.981 -> 0.986 on a different 5-file sample) -- reassuring
+that the original finding was a stable property of the species' spectral
+content, not a fluke of which 5 files got picked.
+
 ## Session 2 — autonomous run (Prompt 3)
 
 Starting autonomous run per user's standing authorization (installs, downloads

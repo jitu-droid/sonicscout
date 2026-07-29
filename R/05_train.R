@@ -121,8 +121,8 @@ false_positive_rate_vs_ambient <- function(predicted, actual) {
 
 write_classifier_results <- function(conf_mat, prec_recall, fpr_ambient, class_counts,
                                       n_train_sources, n_val_sources, n_test_sources,
-                                      data_origins) {
-  ensure_dir(dirname(RESULTS_PATH))
+                                      data_origins, accuracy, results_path = RESULTS_PATH) {
+  ensure_dir(dirname(results_path))
 
   conf_mat_df <- as.data.frame.matrix(conf_mat)
   conf_mat_md <- knitr_table_or_fallback(cbind(predicted_class = rownames(conf_mat_df), conf_mat_df))
@@ -144,6 +144,11 @@ write_classifier_results <- function(conf_mat, prec_recall, fpr_ambient, class_c
     "## Class counts (windows, all splits)",
     "",
     knitr_table_or_fallback(class_counts),
+    "",
+    "## Overall test accuracy",
+    "",
+    sprintf("**%s** (fraction of test windows classified correctly, all classes combined).",
+            if (is.na(accuracy)) "N/A" else scales_percent(accuracy)),
     "",
     "## Confusion matrix (test set; rows = predicted, columns = actual)",
     "",
@@ -169,8 +174,8 @@ write_classifier_results <- function(conf_mat, prec_recall, fpr_ambient, class_c
     "retune thresholds until the numbers look better before reporting them."
   )
 
-  writeLines(lines, RESULTS_PATH)
-  invisible(RESULTS_PATH)
+  writeLines(lines, results_path)
+  invisible(results_path)
 }
 
 #' knitr::kable if available, else a plain data.frame print captured as text
@@ -187,13 +192,12 @@ scales_percent <- function(x) paste0(round(x * 100, 1), "%")
 
 # ---- Entry point ---------------------------------------------------------------
 
-main <- function() {
-  if (!file.exists(FEATURES_PATH)) {
-    stop(FEATURES_PATH, " not found -- run R/03_preprocess.R and R/04_features.R first.")
-  }
-  features_df <- utils::read.csv(FEATURES_PATH, stringsAsFactors = FALSE)
-  features_df <- grouped_split(features_df)
-
+#' Train a random forest on features_df's "train" split, evaluate on its
+#' "test" split (features_df must already have grouped_split() applied).
+#' Pulled out of main() so R/07_compression_delta.R can call it a second
+#' time on the "uncompressed" condition's features without duplicating this
+#' logic or touching the default compressed-condition output files.
+train_and_evaluate <- function(features_df) {
   feature_cols <- setdiff(names(features_df), c(METADATA_COLS, "split"))
   features_df$label <- as.factor(features_df$label)
 
@@ -227,30 +231,55 @@ main <- function() {
   conf_mat <- table(predicted = predicted, actual = actual)
   prec_recall <- per_class_precision_recall(conf_mat)
   fpr_ambient <- false_positive_rate_vs_ambient(as.character(predicted), as.character(actual))
+  accuracy <- if (length(predicted) > 0) mean(as.character(predicted) == as.character(actual)) else NA_real_
 
-  ensure_dir(dirname(VARIMP_PATH))
-  grDevices::png(VARIMP_PATH, width = 1000, height = 800, res = 150)
-  randomForest::varImpPlot(model, main = "Variable importance")
+  list(
+    model = model, feature_cols = feature_cols, class_levels = levels(features_df$label),
+    conf_mat = conf_mat, prec_recall = prec_recall, fpr_ambient = fpr_ambient,
+    accuracy = accuracy, n_test = length(predicted),
+    n_train_sources = length(unique(train_df$source_file)),
+    n_val_sources = length(unique(features_df$source_file[features_df$split == "val"])),
+    n_test_sources = length(unique(test_df$source_file)),
+    data_origins = table(features_df$data_origin),
+    class_counts = {
+      cc <- as.data.frame(table(label = features_df$label, data_origin = features_df$data_origin))
+      cc[cc$Freq > 0, ]
+    }
+  )
+}
+
+#' @param features_path,model_path,results_path,varimp_path Overridable so
+#'   R/07_compression_delta.R can run this against the "uncompressed"
+#'   condition without touching the default (compressed) output files.
+main <- function(features_path = FEATURES_PATH, model_path = MODEL_PATH,
+                  results_path = RESULTS_PATH, varimp_path = VARIMP_PATH) {
+  if (!file.exists(features_path)) {
+    stop(features_path, " not found -- run R/03_preprocess.R and R/04_features.R first.")
+  }
+  features_df <- utils::read.csv(features_path, stringsAsFactors = FALSE)
+  features_df <- grouped_split(features_df)
+
+  result <- train_and_evaluate(features_df)
+
+  ensure_dir(dirname(varimp_path))
+  grDevices::png(varimp_path, width = 1000, height = 800, res = 150)
+  randomForest::varImpPlot(result$model, main = "Variable importance")
   grDevices::dev.off()
 
-  ensure_dir(dirname(MODEL_PATH))
-  saveRDS(list(model = model, feature_cols = feature_cols,
-               class_levels = levels(features_df$label)),
-          MODEL_PATH)
+  ensure_dir(dirname(model_path))
+  saveRDS(list(model = result$model, feature_cols = result$feature_cols,
+               class_levels = result$class_levels),
+          model_path)
 
-  class_counts <- as.data.frame(table(label = features_df$label, data_origin = features_df$data_origin))
-  class_counts <- class_counts[class_counts$Freq > 0, ]
+  write_classifier_results(result$conf_mat, result$prec_recall, result$fpr_ambient,
+                            result$class_counts, result$n_train_sources, result$n_val_sources,
+                            result$n_test_sources, result$data_origins, result$accuracy,
+                            results_path = results_path)
 
-  n_train_src <- length(unique(train_df$source_file))
-  n_val_src <- length(unique(features_df$source_file[features_df$split == "val"]))
-  n_test_src <- length(unique(test_df$source_file))
-  data_origins <- table(features_df$data_origin)
-
-  write_classifier_results(conf_mat, prec_recall, fpr_ambient, class_counts,
-                            n_train_src, n_val_src, n_test_src, data_origins)
-
-  message("Training complete. Model at ", MODEL_PATH, ", results at ", RESULTS_PATH)
-  invisible(list(model = model, conf_mat = conf_mat, fpr_ambient = fpr_ambient))
+  message(sprintf("Training complete. Model at %s, results at %s (test accuracy: %s)",
+                   model_path, results_path,
+                   if (is.na(result$accuracy)) "N/A" else scales_percent(result$accuracy)))
+  invisible(result)
 }
 
 if (sys.nframe() == 0) {

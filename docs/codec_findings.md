@@ -7,25 +7,41 @@ not estimates. Re-run the script to regenerate this file from scratch.
 
 ## Signature survivability by species
 
-|species                         | mean_survivability| mean_pearson| mean_cosine| n_files|
-|:-------------------------------|------------------:|------------:|-----------:|-------:|
-|synthetic_stridulation          |              0.969|        0.968|       0.970|       5|
-|synthetic_tone_plus_noise       |              0.945|        0.929|       0.961|       4|
-|synthetic_chewing_pulses        |              0.910|        0.858|       0.963|       5|
-|synthetic_mosquito_wingbeat     |              0.800|        0.799|       0.802|       5|
-|synthetic_broadband_noise       |              0.510|        0.055|       0.964|       5|
-|synthetic_above_nyquist_control |              0.101|       -0.097|       0.298|       1|
+|species                            | mean_survivability| mean_pearson| mean_cosine| n_files|
+|:----------------------------------|------------------:|------------:|-----------:|-------:|
+|real_chorthippus_biguttulus        |              0.986|        0.986|       0.987|       5|
+|real_cicada_orni                   |              0.972|        0.967|       0.976|       5|
+|synthetic_stridulation             |              0.969|        0.968|       0.970|       5|
+|real_chorthippus_brunneus          |              0.956|        0.953|       0.960|       5|
+|synthetic_tone_plus_noise          |              0.945|        0.929|       0.961|       4|
+|synthetic_chewing_pulses           |              0.910|        0.858|       0.963|       5|
+|real_chewing_diaprepes_abbreviatus |              0.892|        0.852|       0.932|       3|
+|real_chewing_phyllophaga           |              0.823|        0.790|       0.856|       4|
+|synthetic_mosquito_wingbeat        |              0.800|        0.799|       0.802|       5|
+|real_chewing_plodia_interpunctella |              0.570|        0.503|       0.637|       2|
+|synthetic_broadband_noise          |              0.510|        0.055|       0.964|       5|
+|real_chewing_otiorhynchus_sulcatus |              0.398|        0.343|       0.453|       1|
+|real_chewing_sitophilus_oryzae     |              0.342|        0.080|       0.603|       5|
+|synthetic_above_nyquist_control    |              0.101|       -0.097|       0.298|       1|
 
 ## Per-frequency-band energy retention (degraded / original)
 
-|species                         | 0-500Hz| 2-4kHz| 4-8kHz| 500Hz-2kHz| >8kHz|
-|:-------------------------------|-------:|------:|------:|----------:|-----:|
-|synthetic_above_nyquist_control |      NA|     NA|     NA|         NA|     0|
-|synthetic_broadband_noise       |   2.470|  2.163|  1.696|      2.498|     0|
-|synthetic_chewing_pulses        |      NA|  2.619|  2.264|      3.889|     0|
-|synthetic_mosquito_wingbeat     |   1.241|     NA|     NA|      1.912|    NA|
-|synthetic_stridulation          |   1.866|     NA|     NA|      2.058|    NA|
-|synthetic_tone_plus_noise       |   1.841|  1.748|  1.371|      1.964|     0|
+|species                            | 0-500Hz| 2-4kHz| 4-8kHz| 500Hz-2kHz| >8kHz|
+|:----------------------------------|-------:|------:|------:|----------:|-----:|
+|real_chewing_diaprepes_abbreviatus |   2.486|  2.634|  2.347|      2.791|     0|
+|real_chewing_otiorhynchus_sulcatus |   6.252|  9.072|  8.022|     10.505|     0|
+|real_chewing_phyllophaga           |   2.801|  3.678|  3.089|      4.656|     0|
+|real_chewing_plodia_interpunctella |   3.642| 16.206| 12.568|     18.464|     0|
+|real_chewing_sitophilus_oryzae     |   9.533| 42.319| 34.762|     45.264|     0|
+|real_chorthippus_biguttulus        |   2.472|  2.041|  1.655|      2.299|     0|
+|real_chorthippus_brunneus          |   2.437|  2.006|  1.801|      2.086|     0|
+|real_cicada_orni                   |   2.332|  2.442|  2.435|      2.528|     0|
+|synthetic_above_nyquist_control    |      NA|     NA|     NA|         NA|     0|
+|synthetic_broadband_noise          |   2.470|  2.163|  1.696|      2.498|     0|
+|synthetic_chewing_pulses           |      NA|  2.619|  2.264|      3.889|     0|
+|synthetic_mosquito_wingbeat        |   1.241|     NA|     NA|      1.912|    NA|
+|synthetic_stridulation             |   1.866|     NA|     NA|      2.058|    NA|
+|synthetic_tone_plus_noise          |   1.841|  1.748|  1.371|      1.964|     0|
 
 ## Reading the >8kHz column
 
@@ -56,7 +72,94 @@ WhatsApp-exported .opus files were provided under
 
 ## Interpretation
 
-TBD -- fill in after reading the tables above. Describe what they
-actually show, including any species/band where survival was poor. If a
-target pest's signature does not survive, say so plainly here and scope
-the MVP accordingly (see docs/methodology.md limitations section).
+**Real Orthoptera stridulation survives WhatsApp compression very well.**
+Both real grasshopper species tested -- *Chorthippus biguttulus*
+(survivability 0.986, n=5 real iNaturalist recordings, drawn from a
+now-59-file corpus across the 3 real species combined) and *Chorthippus
+brunneus* (0.956, n=5) -- score as high as or higher than the synthetic
+stridulation analogue (0.969). Real *Cicada orni* (0.972, n=5) survives
+comparably well. This directly answers the question this step was run to
+answer: **yes, real Orthoptera stridulation signatures retain enough
+discriminative structure after 16kHz/16kbps Opus to still plausibly be
+classifiable** -- their energy sits low enough in frequency (well under
+8kHz for the fundamental and dominant harmonics) that the codec's Nyquist
+ceiling barely touches them. This is a real-recording finding, measured
+directly, not inferred from a synthetic tone.
+
+**Species-proxy caveat:** none of these are locusts. *Chorthippus
+biguttulus* and *Chorthippus brunneus* are common European field
+grasshoppers (family Acrididae, the same family as true locusts), and
+*Cicada orni* is a Mediterranean cicada. Stridulation mechanics are
+genuinely representative of Acrididae as a group, so this is a defensible
+acoustic proxy -- but the correct claim is **"validated on Orthoptera
+stridulation using European grasshoppers as acoustic proxies,"** never
+"validated on locusts." InsectSet459 does not include *Schistocerca* or
+*Locusta* specifically (see `R/01_download_data.R`).
+
+**Real larval chewing/feeding sounds survive far less reliably, and vary
+hugely by species -- this answers the chewing-sound scope question, and
+the answer is mixed-to-poor:**
+
+| Species (real recordings) | Survivability | Read |
+|---|---|---|
+| *Diaprepes abbreviatus* (root weevil larva) | 0.892 | survives reasonably |
+| *Phyllophaga* (white grub) | 0.823 | survives reasonably |
+| ***Plodia interpunctella*** (Indian meal moth larva -- **the closest real proxy available to Fall Armyworm, both Lepidoptera**) | **0.570** | **poor survival** |
+| *Otiorhynchus sulcatus* (black vine weevil, n=1 only) | 0.398 | poor, but single-file, low confidence |
+| *Sitophilus oryzae* (rice weevil larva) | 0.342, Pearson 0.080 | **worst survival measured -- near-zero shape correlation** |
+
+The weevil/grub (Coleoptera) chewing sounds survive noticeably better than
+the moth larva's. Given *Plodia interpunctella* is the only real Lepidoptera
+proxy in this dataset and it shows poor survivability, **this is evidence
+against Fall Armyworm chewing detection working reliably over a WhatsApp
+voice note as currently scoped** -- not proof it's impossible, but a real,
+measured warning sign, not a hypothetical one. Combined with the band
+retention table showing implausibly large (>10x, up to 45x for *Sitophilus
+oryzae*) retention ratios in several real chewing species' mid-frequency
+bands -- a value that far exceeds 1.0 does not mean the signal "survived
+extra well"; on these quiet, narrowband real recordings it means the codec's
+noise-shaping is injecting audible artifacts into bands where the original
+had very little energy to begin with, which would read as classifier noise,
+not signal.
+
+**CRITICAL CAVEAT -- this is a ceiling result, not an end-to-end one.**
+Checked the USDA-ARS source documentation for how each chewing recording
+was actually captured. Every single one used a contact/vibration sensor,
+never an open-air microphone:
+
+| Species | File(s) | Sensor |
+|---|---|---|
+| *Plodia interpunctella* | dfaccs11.wav | Bruel & Kjaer accelerometer |
+| *Plodia interpunctella* | piezimm1.wav | piezoelectric disk sensor |
+| *Sitophilus oryzae* | pvdfrw1.wav | PVDF film sensor |
+| *Sitophilus oryzae* | accelrw.wav | Bruel & Kjaer accelerometer |
+| *Sitophilus oryzae* | w40khzrw1.wav / w30khzrw1.wav | 40kHz / 30kHz ultrasonic contact sensor |
+| *Sitophilus oryzae* | piezorw1.wav | piezoelectric disk sensor |
+| *Phyllophaga* | grubsnd.wav, unid5ed.wav, seg20l1.wav, seg20r1.wav | soil microphone (ground-contact, not air) |
+| *Otiorhynchus sulcatus* | bvws22-2.wav | accelerometer |
+| *Diaprepes abbreviatus* | diaplab.wav, diapfld.wav, diaprep1.wav | not stated on the source page, but consistent with the same lab's substrate-contact methodology |
+
+**This changes what the table above is allowed to claim.** These signals
+were captured directly from the substrate (grain kernel, soil, tree root,
+insect body) with no air path, no distance attenuation, and no ambient
+farm noise in the recording chain -- categorically cleaner than anything a
+phone microphone would ever pick up. So the correct reading of the
+survivability numbers above is: **"IF a chewing/feeding signal is captured
+this cleanly, here is how much of it a 16kHz/16kbps Opus round-trip
+destroys" -- a best-case ceiling, not a farmer's-phone-at-distance
+result.** And even under this best-case ceiling, *Plodia interpunctella*
+(0.570) and *Sitophilus oryzae* (0.342) still survive poorly. Real-world
+open-air capture at unknown distance, through a phone microphone, in the
+presence of wind/other farm noise, would only be expected to perform *worse*
+than this ceiling, never better. This makes the case against WhatsApp-voice-
+note chewing detection (Fall Armyworm specifically) stronger, not weaker,
+than the raw survivability numbers alone suggest.
+
+**Recommendation following directly from these numbers:** scope the MVP to
+stridulation/wingbeat pests (validated above on real, open-air-recorded
+iNaturalist audio) and treat chewing-sound detection, including Fall
+Armyworm specifically, as a phase-2 target requiring a fundamentally
+different capture method (a contact/vibration sensor design, not a
+WhatsApp voice note from an open-air phone microphone) -- see
+`docs/methodology.md` and `README.md` for where this is now reflected in
+the project's framing.

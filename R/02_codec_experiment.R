@@ -174,39 +174,63 @@ run_codec_experiment <- function(reference_dir = REFERENCE_DIR,
          "docs/methodology.md) before running this experiment.")
   }
 
-  purrr::map_dfr(ref_files, function(ref_path) {
-    species <- basename(dirname(ref_path))
-    degraded_path <- file.path(degraded_dir, species, basename(ref_path))
+  results <- purrr::map(ref_files, function(ref_path) {
+    tryCatch({
+      species <- basename(dirname(ref_path))
+      degraded_path <- file.path(degraded_dir, species, basename(ref_path))
 
-    simulate_whatsapp_compression(ref_path, degraded_path, sample_rate, bitrate_kbps)
+      simulate_whatsapp_compression(ref_path, degraded_path, sample_rate, bitrate_kbps)
 
-    orig_spec <- compute_mean_spectrum(ref_path)
-    deg_spec  <- compute_mean_spectrum(degraded_path)
+      orig_spec <- compute_mean_spectrum(ref_path)
+      deg_spec  <- compute_mean_spectrum(degraded_path)
 
-    retention  <- band_retention_ratios(orig_spec, deg_spec)
-    similarity <- spectral_similarity(orig_spec, deg_spec)
-    score      <- survivability_score(similarity)
+      retention  <- band_retention_ratios(orig_spec, deg_spec)
+      similarity <- spectral_similarity(orig_spec, deg_spec)
+      score      <- survivability_score(similarity)
 
-    dplyr::mutate(
-      retention,
-      species = species,
-      file = basename(ref_path),
-      pearson_correlation = similarity$pearson_correlation,
-      cosine_similarity = similarity$cosine_similarity,
-      survivability_score = score,
-      .before = 1
-    )
+      dplyr::mutate(
+        retention,
+        species = species,
+        file = basename(ref_path),
+        pearson_correlation = similarity$pearson_correlation,
+        cosine_similarity = similarity$cosine_similarity,
+        survivability_score = score,
+        .before = 1
+      )
+    }, error = function(e) {
+      # One malformed source file (seen once already: a 2005-era WAV with a
+      # corrupt header that ffmpeg silently mis-parses) must not take down
+      # the whole experiment -- skip it, but say so out loud rather than
+      # silently dropping it from the results.
+      message("Skipping ", ref_path, " (codec experiment): ", conditionMessage(e))
+      NULL
+    })
   })
+
+  n_failed <- sum(vapply(results, is.null, logical(1)))
+  if (n_failed > 0) {
+    message(n_failed, " of ", length(ref_files), " reference files failed and were skipped -- see messages above.")
+  }
+
+  dplyr::bind_rows(results)
 }
 
 # ---- Step 4: figures --------------------------------------------------------
 
 #' Render a before/after spectrogram panel (one row per species, using its
 #' first reference file) to docs/figures/codec_before_after.png.
+#'
+#' @param species_filter Optional character vector of species directory
+#'   names to include (exact match). Defaults to all species found -- but
+#'   once real recordings are added alongside the synthetic ones, the panel
+#'   can get long enough to stop being slide-legible, so callers should pass
+#'   a curated subset (e.g. the synthetic 10kHz ground-truth control plus a
+#'   couple of real species) rather than relying on the default.
 render_before_after_panel <- function(reference_dir = REFERENCE_DIR,
                                        degraded_dir = DEGRADED_DIR,
                                        output_path = file.path(FIGURES_DIR, "codec_before_after.png"),
-                                       fft_window = FFT_WINDOW) {
+                                       fft_window = FFT_WINDOW,
+                                       species_filter = NULL) {
   ensure_dir(dirname(output_path))
   ref_files <- list.files(reference_dir, pattern = "\\.wav$",
                           recursive = TRUE, full.names = TRUE)
@@ -214,6 +238,13 @@ render_before_after_panel <- function(reference_dir = REFERENCE_DIR,
     stop("No .wav reference files found under ", reference_dir, "; nothing to plot.")
   }
   species_first_file <- purrr::map_chr(split(ref_files, basename(dirname(ref_files))), 1)
+  if (!is.null(species_filter)) {
+    species_first_file <- species_first_file[names(species_first_file) %in% species_filter]
+    if (length(species_first_file) == 0) {
+      stop("species_filter matched none of the available species: ",
+           paste(names(species_first_file), collapse = ", "))
+    }
+  }
 
   n <- length(species_first_file)
   grDevices::png(output_path, width = 1600, height = 550 * n, res = 150)
@@ -406,7 +437,23 @@ compare_real_vs_simulated <- function(reference_dir = REFERENCE_DIR,
 
 main <- function() {
   results <- run_codec_experiment()
-  render_before_after_panel()
+
+  # Figure legibility: always include the synthetic 10kHz ground-truth
+  # control (the "does the simulation actually destroy content above
+  # Nyquist" check), plus real recordings if R/prepare_real_reference.R has
+  # populated any `real_*` species -- that's the slide that matters most
+  # once real audio is available. Falls back to a couple of synthetic pest
+  # analogues if no real species exist yet, so the figure is never empty.
+  available_species <- basename(list.dirs(REFERENCE_DIR, recursive = FALSE))
+  real_species <- available_species[startsWith(available_species, "real_")]
+  figure_species <- if (length(real_species) > 0) {
+    c("synthetic_above_nyquist_control", real_species)
+  } else {
+    c("synthetic_above_nyquist_control", "synthetic_stridulation", "synthetic_mosquito_wingbeat")
+  }
+  figure_species <- intersect(figure_species, available_species)
+
+  render_before_after_panel(species_filter = figure_species)
   write_codec_findings(results)
 
   realcheck <- compare_real_vs_simulated()

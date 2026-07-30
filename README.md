@@ -172,15 +172,22 @@ a corpus this size, and for the full before/after story of fixing it.
   biological mechanism separating *C. biguttulus* from *C. brunneus*** --
   two sympatric congeners whose species boundary is maintained by song
   TIMING, not spectral content. Result: *C. brunneus* recall rose from 34%
-  to 43.1%, while *C. biguttulus* stayed flat -- a real, targeted gain, not
-  a general improvement. See `docs/methodology.md` for the biology and the
-  citations.
+  to 43.1%, while *C. biguttulus* stayed flat. An ablation (Prompt 10)
+  isolated this from a simultaneous window-length change: most of the gain
+  (~6.1pp of ~9pp) is attributable to temporal features specifically,
+  corroborated at two window lengths independently, though neither effect
+  alone fully clears 95% confidence -- see `docs/methodology.md` and
+  `docs/ablation_results.md` for the biology, citations, and the full
+  decomposition.
 - **Operating point:** the raw 21.9% false-positive rate isn't deployable
-  for a farmer-facing alert system. A confidence threshold of 0.45 (chosen
-  from a measured precision/recall/false-alarm sweep, not a round-number
-  default) gets 97.5% precision / 76.2% recall / 8.5% false-positive rate,
+  for a farmer-facing alert system, and it's also a WINDOW-level number --
+  `predict_pest()` pools predictions across a clip's windows before
+  deciding, and the operating point is chosen from that CLIP-level curve
+  (Prompt 10), not the window-level one. A confidence threshold of 0.45
+  (chosen from a measured precision/recall/false-alarm sweep) gets 90.1%
+  precision / 72.7% recall / 7.7% false-positive rate at the clip level,
   and is now `R/06_predict.R`'s actual default -- see
-  `docs/operating_point.md`.
+  `docs/operating_point.md` for the window-vs-clip comparison in full.
 - **Compression cost:** codec-only delta -1.1% (95% range -8.8% to +6.0%,
   indistinguishable from zero), full-fidelity delta +2.8% (95% range -6.2%
   to +13.0%, suggestive of a real bandwidth cost but not yet confirmed at

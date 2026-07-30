@@ -200,30 +200,67 @@ than erroring, and was found dropping real training rows before being
 fixed the same way).
 
 **Result: *C. brunneus* mean recall rose from 34% (Prompt 8, spectral-only
-features) to 43.1% (this run, temporal features added) -- a real gain in**
-**exactly the class this was aimed at**, while *C. biguttulus* stayed
-essentially flat (63.6% -> 62.4%) and overall accuracy moved only modestly
-(66.8% -> 68.5%). This is consistent with, though not proof of, the
-biological hypothesis: the feature that targets what actually separates
-these two species helped the harder one of the pair specifically, not
-classes broadly. The two species remain frequently confused with each
-other (pooled confusion matrix: 1708 *C. brunneus* windows called *C.
-biguttulus*, 1082 the other way) -- reduced, not resolved.
+features, 2s window) to 43.1% (Prompt 9, temporal features added, 4s
+window) -- a real gain in exactly the class this was aimed at**, while
+*C. biguttulus* stayed essentially flat (63.6% -> 62.4%) and overall
+accuracy moved only modestly (66.8% -> 68.5%). The two species remain
+frequently confused with each other (pooled confusion matrix: 1708
+*C. brunneus* windows called *C. biguttulus*, 1082 the other way) --
+reduced, not resolved.
+
+**But Prompt 9 changed window length (2s -> 4s) AND added temporal
+features in the same run -- so which one actually produced the +9.1pp
+gain was, at that point, an open question, not a settled one.** Prompt 10
+ran a proper ablation to answer it: four arms (4s/spectral-only,
+4s/spectral+temporal, 2s/spectral-only, 2s/spectral+temporal), all four
+sharing the identical fold assignment, so every comparison is a clean
+paired one (`docs/ablation_results.md`, `R/09_ablation.R`).
+
+**Result: most of the gain is attributable to temporal features, not
+window length -- corroborated twice, independently, though neither effect
+individually clears this project's 95%-confidence bar taken alone.**
+Overall accuracy is nearly identical at both window lengths within a
+feature set (66.2% at 4s vs. 66.8% at 2s, spectral-only; 68.5% at 4s vs.
+68.4% at 2s, with temporal features) -- window length barely moves overall
+accuracy. Adding temporal features moves overall accuracy by roughly +2pp
+at BOTH window lengths (paired deltas: +2.3pp at 4s, +1.7pp at 2s) -- two
+independent, same-direction measurements. For *C. brunneus* recall
+specifically: the temporal-feature effect is measured twice, independently,
+at both window lengths, and comes out positive both times (+6.1pp at 4s,
+95% range -5.1% to +23.8%; +3.9pp at 2s, 95% range -1.7% to +9.4%, a
+noticeably tighter interval). The window-length-alone effect, now a clean
+paired comparison (spectral-only, both window lengths, identical folds):
++3.5pp, 95% range -7.9% to +18%. Window-length-alone (+3.5pp) plus
+temporal-feature-alone at 4s (+6.1pp) sum to +9.6pp, closely matching the
+actual observed total change (+9pp) -- a reassuring consistency check on a
+decomposition nothing forces to add up correctly.
+
+**None of these individual paired deltas fully excludes zero at 95%
+confidence taken alone, but two independent replications of the same
+positive effect (at 4s and at 2s) is stronger evidence than either alone.**
+This is reported as corroborated-but-not-fully-confirmed, not as "proven"
+or "debunked" -- that is the honest state of the evidence. Concretely:
+window length affects *C. brunneus* recall specifically, not overall
+accuracy; temporal features affect both overall accuracy and *C. brunneus*
+recall, at both window lengths tested. This is NOT the clean negative
+result the confound raised as a live possibility ("most of it was window
+length") -- the data points the other way.
 
 **Do temporal features actually rank highly in variable importance? Mostly
 no, and that's reported plainly rather than only reporting the accuracy
-win.** Of the 11 temporal features, only `envelope_mod_peak_ratio` (rank
-11 of 32 by Gini importance) and `temporal_entropy` (rank 19) place in the
-upper half; the rest rank in the bottom third, below every MFCC and every
-original spectral feature. MFCCs still dominate the top of the ranking
-outright. The honest reading: these features contribute real value in
-combination (the *C. brunneus* recall gain is real and measured) without
-any single one being individually as powerful a split as the existing
-spectral features -- plausible, since each is a compressed, low-
-dimensional summary (a rate, a ratio, a count) competing against 12 MFCCs
-that already carry substantial information. Whether temporal features
-"rank highly" was explicitly an open question this prompt asked to
-report either way -- the answer is no, individually, but yes, in effect.
+win -- and it turns out not to be contradictory.** Of the 11 temporal
+features, only `envelope_mod_peak_ratio` (rank 11 of 32 by Gini importance)
+and `temporal_entropy` (rank 19) place in the upper half; the rest rank in
+the bottom third, below every MFCC and every original spectral feature.
+MFCCs still dominate the top of the ranking outright. The honest reading,
+now backed by the ablation above: these features contribute real,
+twice-replicated value in combination without any single one being
+individually as powerful a split as the existing spectral features --
+plausible, since each is a compressed, low-dimensional summary (a rate, a
+ratio, a count) competing against 12 MFCCs that already carry substantial
+information. Whether temporal features "rank highly" was explicitly an
+open question this prompt asked to report either way -- the answer is no,
+individually, but yes, in combined effect on accuracy.
 
 **Did the temporal features also make the classifier's accuracy less
 sensitive to compression, as hypothesized?** No -- see "The compression
@@ -279,25 +316,49 @@ labelled, for anyone auditing how the project's own numbers evolved.
 bounds every claim above):** *C. biguttulus* 45, *C. brunneus* 45, *Cicada
 orni* 45, ambient 145.
 
-## Operating point: what a farmer would actually experience (Prompt 9, Part 2)
+## Operating point: what a farmer would actually experience (Prompt 9, Part 2; Prompt 10, Part 2)
 
-**21.9% mean false-positive rate is the raw-argmax number -- whatever the
-model's top-1 prediction is, at any confidence -- and it is not a fixed
-property of the model.** The model already emits a confidence score with
-every prediction (the top class's random-forest vote share); this project
-never actually tuned the `low_confidence` threshold against a measured
-trade-off before this prompt. `R/08_operating_point.R` sweeps that
-threshold using the SAME out-of-fold predictions the CV accuracy numbers
-above come from (not the final model's own training predictions, which
-would be optimistic), restricted to real audio (synthetic classes aren't
-part of the deployed scenario), and reports precision/recall/false-
-positive-rate at each threshold plus per-species detection-rate curves
-(`docs/operating_point.md`, `docs/figures/pr_curve.png`).
+**21.9% mean false-positive rate is the raw-argmax, WINDOW-level number --
+whatever the model's top-1 prediction is on a single window, at any
+confidence -- and it is not a fixed property of the model, nor even the
+right unit to measure.** `R/06_predict.R`'s `predict_pest()` never scores
+one window in isolation: it windows an incoming voice note, gates
+near-silent windows, and averages the resulting probability vectors across
+every surviving window before deciding. Prompt 9 first swept a threshold
+over window-level predictions; Prompt 10 corrected this to sweep over
+CLIP-level predictions, built by aggregating out-of-fold window
+predictions with the EXACT SAME rule `predict_pest()` uses (mean
+probability vector across a clip's windows, then argmax + top confidence)
+-- the unit a farmer actually experiences (`docs/operating_point.md`,
+`docs/figures/pr_curve.png`).
 
-**Chosen operating point: threshold = 0.45.** Precision 97.5%, recall
-(detection rate) 76.2%, false-positive rate 8.5%. Chosen as the LOWEST
-threshold whose false-positive rate clears a 10% deployment bar, sacrificing
-as little recall as possible while still meeting it.
+**The window-vs-clip comparison is itself a result, and it's more nuanced
+than "pooling makes everything better."** Clip-level overall accuracy is
+higher and clip-level false-positive rate is lower at every threshold than
+window-level (both consistent with pooling reducing noise) -- but
+clip-level PRECISION at a given threshold reads LOWER than window-level
+precision at that threshold (90.1% vs. 97.5% at 0.45). This is not a
+contradiction: windows and clips have very different class balance.
+Ambient recordings (ESC-50, uniformly 5 seconds) contribute few windows
+each; many real pest recordings run much longer and contribute up to the
+20-window cap each. At window level this makes ambient a small minority of
+test units (~19%); at clip level ambient and pest are roughly balanced
+(~51%). The same absolute false-positive rate costs precision far more
+when negatives are half the population than when they're a fifth of it --
+window-level precision was inflated by a class-balance artifact of
+window-count-per-recording, not a real model advantage at the window
+level. Recall is also slightly lower at clip level (72.7% vs. 76.2%) for a
+different, genuine reason: averaging a clip's windows can dilute one
+strongly-confident correct window with weaker or wrong-favouring windows
+from the same clip. Both effects are real; the clip-level numbers are the
+honest ones to act on, since a clip -- not a window -- is what exists at
+inference time.
+
+**Chosen operating point (from the CLIP-level curve): threshold = 0.45.**
+Precision 90.1%, recall (detection rate) 72.7%, false-positive rate 7.7%.
+Chosen as the LOWEST threshold whose false-positive rate clears a 10%
+deployment bar, sacrificing as little recall as possible while still
+meeting it.
 
 **The trade, stated explicitly, in deployment terms:** this is a screening
 tool a farmer acts on directly. A false alarm (an alert on real ambient
@@ -311,19 +372,30 @@ the threshold prioritises holding false-positive rate down over
 maximising accuracy or F1, and why it is now `R/06_predict.R`'s
 `LOW_CONFIDENCE_THRESHOLD` default -- what a farmer receives now matches
 what this analysis reports, not a separate unexamined number (the
-previous default, 0.4, was never validated against any measurement at
+original default, 0.4, was never validated against any measurement at
 all).
 
-**Per-species cost of this threshold:** at 0.45, detection rate is 72.7%
-for *C. biguttulus*, 66.4% for *C. brunneus*, and 89.5% for *Cicada
+**Per-species cost of this threshold (clip-level):** detection rate is
+70.7% for *C. biguttulus*, 58.7% for *C. brunneus*, and 88.7% for *Cicada
 orni* -- the threshold that protects against false alarms costs *C.
 brunneus* (already the weakest class) the most detection rate
 proportionally, a real trade worth naming rather than hiding behind the
 single aggregate recall figure.
 
+**Caveat on how much the clip-level advantage holds up for a real, short
+voice note:** the windows-per-clip distribution behind these numbers
+(min=1, p25=2, median=2, p75=6, max=20 across this corpus) is dominated by
+real field recordings, many far longer than the 10-30 second clip the
+webhook actually asks a farmer for. A short real voice note yielding only
+2-3 usable windows after gating gets a smaller pooling benefit than the
+median recording in this analysis -- the clip-level curve is a genuine
+improvement over the window-level one, not an overstatement of it, but its
+size in this analysis should not be read as the exact size a short farmer
+recording will see in practice.
+
 ## Near-silent windows are gated, not kept and mislabelled
 
-A 2-second training window inherits its whole source recording's label
+A training window inherits its whole source recording's label
 regardless of whether that specific window actually contains any of the
 source's signal -- a long recording with quiet gaps between call bouts
 produces windows that are technically correctly labelled but acoustically

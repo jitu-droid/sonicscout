@@ -32,17 +32,21 @@ if (!exists("ensure_dir", mode = "function")) {
 
 MODEL_PATH <- file.path(.repo_root, "models", "classifier.rds")
 
-# LOW_CONFIDENCE_THRESHOLD (Prompt 9, Part 2): set from a measured
-# precision/recall/false-positive-rate sweep (R/08_operating_point.R,
-# docs/operating_point.md), not left as an unexamined round number. At
-# 0.45: 97.5% precision, 76.2% recall (detection rate), 8.5% false-positive
-# rate against real ambient audio -- chosen as the lowest threshold whose
+# LOW_CONFIDENCE_THRESHOLD: set from a measured precision/recall/false-
+# positive-rate sweep (R/08_operating_point.R, docs/operating_point.md),
+# not left as an unexamined round number. Chosen from the CLIP-level curve
+# (Prompt 10, Part 2) -- the unit a farmer actually experiences (one voice
+# note in, one pooled prediction out, exactly what predict_pest() below
+# produces), not the window-level curve Prompt 9 originally used. At 0.45:
+# 90.1% precision, 72.7% recall (detection rate), 7.7% false-positive rate
+# against real ambient audio -- chosen as the lowest threshold whose
 # false-positive rate clears a 10% deployment bar. Rationale: a screening
 # tool a farmer acts on directly loses more value from repeated false
 # alarms (which destroy trust in the alert) than from a missed detection
 # (for which the low-confidence path below already offers a recovery: ask
 # for a longer/louder recording). See docs/operating_point.md for the full
-# threshold-sweep table and the trade stated explicitly.
+# threshold-sweep table (window-level AND clip-level, side by side) and
+# the trade stated explicitly.
 LOW_CONFIDENCE_THRESHOLD <- 0.45
 
 #' Predict the top-3 pest/ambient classes for one audio file.

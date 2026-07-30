@@ -19,6 +19,7 @@ data/processed/*
 !data/processed/.gitkeep
 data/processed_uncompressed/
 data/processed_full_fidelity/
+data/processed_2s_ablation/
 data/codec_experiment/real/*
 !data/codec_experiment/real/.gitkeep
 

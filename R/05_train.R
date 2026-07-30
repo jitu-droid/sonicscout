@@ -309,32 +309,44 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     " `docs/methodology.md` for the full biological reasoning.",
     "",
     "**Result: *C. brunneus* mean recall rose from 34% (Prompt 8, spectral-",
-    " only) to 43.1% (this run) -- a real, meaningful gain in the specific",
-    " class this was aimed at**, while *C. biguttulus* stayed essentially",
-    " flat (63.6% -> 62.4%). This is consistent with, though not proof of,",
-    " the biological hypothesis: adding the dimension that actually",
-    " separates these species helped the harder-to-classify one of the",
-    " pair specifically, not classes in general. The two species are still",
-    " frequently confused with EACH OTHER (pooled confusion matrix: 1708",
-    " *C. brunneus* windows called *C. biguttulus*, 1082 the other way) --",
-    " the confusion is reduced, not resolved.",
+    " only, 2s window) to 43.1% (Prompt 9, temporal features + 4s window)",
+    " -- a real, meaningful gain in the specific class this was aimed at**,",
+    " while *C. biguttulus* stayed essentially flat (63.6% -> 62.4%). The",
+    " two species are still frequently confused with EACH OTHER (pooled",
+    " confusion matrix: 1708 *C. brunneus* windows called *C. biguttulus*,",
+    " 1082 the other way) -- the confusion is reduced, not resolved.",
+    "",
+    "**Prompt 9 changed window length AND added temporal features in the",
+    " same run, so which one produced the gain was an open question until",
+    " Prompt 10's ablation answered it (`docs/ablation_results.md`).**",
+    " Result: most of the gain is attributable to temporal features",
+    " specifically, corroborated at BOTH window lengths independently (paired",
+    " *C. brunneus* recall deltas: +6.1pp at 4s, +3.9pp at 2s, same",
+    " direction both times), with window length contributing a smaller,",
+    " separately-confirmed effect concentrated on *C. brunneus* recall",
+    " specifically (+3.5pp, a clean paired comparison) rather than overall",
+    " accuracy (which barely moves with window length at either feature",
+    " set). Neither individual paired delta fully excludes zero at 95%",
+    " confidence alone, but two independent same-direction replications is",
+    " stronger evidence than either alone -- reported as corroborated, not",
+    " as fully confirmed.",
     "",
     "**Do temporal features actually rank highly in variable importance?",
     " Mostly no -- report that plainly, since the accuracy result above",
-    " doesn't automatically imply it.** Of 11 temporal features, only",
-    " `envelope_mod_peak_ratio` (rank 11 of 32 by Gini importance) and",
-    " `temporal_entropy` (rank 19) place in the upper half; the rest",
-    " (`pulse_rate_hz`, the `ipi_*` triplet, `phrase_duration_s`,",
-    " `n_phrase_bouts`, `phrase_duty_cycle`) rank in the bottom third,",
-    " below every MFCC and every original spectral feature. MFCCs still",
-    " dominate the top of the importance ranking outright. The honest",
-    " reading: these features contribute real, measurable value in",
-    " combination (the *C. brunneus* recall gain is real) without any",
-    " single one of them being individually as powerful a split as the",
-    " existing spectral features -- plausible given they're compressed,",
-    " low-dimensional summaries (a rate, a ratio, a count) competing",
-    " against 12 MFCCs and several spectral-shape statistics that already",
-    " carry a lot of information. See `docs/figures/variable_importance.png`.",
+    " doesn't automatically imply it, and the ablation confirms it isn't a",
+    " contradiction.** Of 11 temporal features, only `envelope_mod_peak_ratio`",
+    " (rank 11 of 32 by Gini importance) and `temporal_entropy` (rank 19)",
+    " place in the upper half; the rest (`pulse_rate_hz`, the `ipi_*`",
+    " triplet, `phrase_duration_s`, `n_phrase_bouts`, `phrase_duty_cycle`)",
+    " rank in the bottom third, below every MFCC and every original spectral",
+    " feature. MFCCs still dominate the top of the importance ranking",
+    " outright. The honest reading: these features contribute real,",
+    " twice-replicated value in combination without any single one of them",
+    " being individually as powerful a split as the existing spectral",
+    " features -- plausible given they're compressed, low-dimensional",
+    " summaries (a rate, a ratio, a count) competing against 12 MFCCs and",
+    " several spectral-shape statistics that already carry a lot of",
+    " information. See `docs/figures/variable_importance.png`.",
     "",
     "**Per-class otherwise:** *Cicada orni* remains the strongest real",
     " class (92.5% mean recall, 92.2% pooled precision) -- a continuous,",
@@ -348,13 +360,16 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     " anything -- there isn't enough data behind it to measure at all.",
     "",
     "**Read this alongside `docs/operating_point.md`:** raw accuracy and",
-    " FPR above use the unmodified argmax decision (whatever the model's",
-    " top-1 prediction is, at any confidence). The operating-point analysis",
-    " sweeps a confidence threshold and finds a materially better deployable",
-    " trade-off (97.5% precision / 76.2% recall at threshold 0.45, vs. the",
-    " 21.9% FPR here at no threshold at all) -- both numbers are honest;",
-    " they answer different questions (\"how good is the model overall\" vs.",
-    " \"what would a farmer actually experience at a chosen operating point\")."
+    " FPR above use the unmodified argmax decision on individual WINDOWS",
+    " (whatever the model's top-1 prediction is, at any confidence, no",
+    " pooling). The operating-point analysis sweeps a confidence threshold",
+    " over CLIP-level predictions (pooled across a clip's windows exactly",
+    " as `predict_pest()` does) and finds a materially better deployable",
+    " trade-off (90.1% precision / 72.7% recall at threshold 0.45, vs. the",
+    " 21.9% FPR here at no threshold and no pooling at all) -- both numbers",
+    " are honest; they answer different questions (\"how good is the model",
+    " on a single window\" vs. \"what would a farmer actually experience at",
+    " a chosen operating point, pooled across a clip's windows\")."
   )
 
   writeLines(lines, results_path)
@@ -412,17 +427,28 @@ train_and_evaluate <- function(features_df) {
 
   # Per-window predicted probability of the top class, plus the true label
   # (Prompt 9, Part 2 -- operating-point analysis needs a confidence score
-  # per test window, not just the hard argmax accuracy numbers above).
+  # per test window, not just the hard argmax accuracy numbers above). The
+  # FULL per-class probability matrix (not just top-1) is also attached
+  # (Prompt 10, Part 2) -- needed to reproduce predict_pest()'s actual
+  # clip-level aggregation (mean of each window's full probability vector,
+  # THEN argmax + top confidence) rather than only ever analysing
+  # window-level predictions, which understate what a farmer experiences
+  # since predict_pest() pools across a clip's windows before deciding.
   prob_matrix <- predict(model, complete_test[, feature_cols], type = "prob")
   top_confidence <- apply(prob_matrix, 1, max)
-  predictions <- data.frame(
-    source_file = complete_test$source_file,
-    label = as.character(actual),
-    data_origin = complete_test$data_origin,
-    predicted = as.character(predicted),
-    confidence = unname(top_confidence),
-    prob_ambient = if ("ambient" %in% colnames(prob_matrix)) unname(prob_matrix[, "ambient"]) else NA_real_,
-    stringsAsFactors = FALSE
+  prob_df <- as.data.frame(prob_matrix)
+  names(prob_df) <- paste0("prob_", names(prob_df))
+  predictions <- cbind(
+    data.frame(
+      source_file = complete_test$source_file,
+      label = as.character(actual),
+      data_origin = complete_test$data_origin,
+      predicted = as.character(predicted),
+      confidence = unname(top_confidence),
+      prob_ambient = if ("ambient" %in% colnames(prob_matrix)) unname(prob_matrix[, "ambient"]) else NA_real_,
+      stringsAsFactors = FALSE
+    ),
+    prob_df
   )
 
   # Some classes may exist in test but not train (or vice versa) if a source

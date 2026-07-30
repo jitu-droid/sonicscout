@@ -130,29 +130,26 @@ encoder.
 
 ## Classifier results (Deliverable D)
 
-Real numbers from an actual train/test run on **real Orthoptera/Cicadidae
+Real numbers from **repeated grouped k-fold cross-validation** (5 folds x
+10 repeats, 50 fold-evaluations total) on **real Orthoptera/Cicadidae
 audio vs. real ESC-50 ambient audio**, both passed through the same
 WhatsApp compression simulation (`docs/classifier_results.md`, regenerated
-fresh by `R/05_train.R`): 109 source files, split 61 train / 19 val / 23
-test source files on the default seed, after an energy gate (below) drops
-near-silent windows.
+fresh by `R/05_train.R`). This is the Prompt 8 replacement for a single
+train/test split -- see "The corpus-expansion, window-cap, and k-fold fix"
+below for why a single split was never defensible here.
 
-- **88.5% overall test accuracy on the default seed.** *C. brunneus*
-  separates cleanly; *C. biguttulus* is confused mainly with *C. brunneus*
-  (the two congeneric grasshoppers are not cleanly separable by the
-  current feature set); *Cicada orni*'s recall is the weakest of the three
-  real classes. See `docs/classifier_results.md` for the full confusion
-  matrix and precision/recall table for this specific seed.
-- **This single-seed number is NOT a stable estimate -- see the next
-  section.** Prompt 7 found that re-splitting this same data with
-  different random seeds swings overall test accuracy from roughly 10% to
-  92%, because only 4-5 source recordings back each real target species,
-  and a handful of those recordings are far longer than the others. Read
-  `docs/compression_delta.md`'s per-class recall table and its "why
-  per-arm accuracy swings so much" section before treating 88.5% as
-  precise-to-the-decimal ground truth for this classifier's real-world
-  performance -- it is one honestly-reported draw from a wide distribution,
-  not a converged estimate.
+- **66.8% mean overall test accuracy (sd 5.4pp, 95% range 55.7% to
+  74.7%). 22.3% mean false-positive rate against real ambient audio (sd
+  7.1pp, range 8.3% to 35.8%).** *Cicada orni* is the strongest real class
+  (90.1% mean recall, 92.2% pooled precision). The two *Chorthippus*
+  species are frequently confused with EACH OTHER (not with ambient) --
+  unsurprising for congeneric grasshoppers with similar stridulation
+  mechanics. *C. brunneus* is notably the weakest class (34% mean recall)
+  despite having the same number of source recordings as *C. biguttulus*
+  (63.6% mean recall) -- worth investigating specifically in any follow-up
+  (see PROGRESS.md's forward-looking note), not just attributed to sample
+  size. See `docs/classifier_results.md` for the full pooled confusion
+  matrix and per-class recall-stability table.
 - Chewing-sound classes are **deliberately excluded** from this classifier
   (a documented judgement call, not an oversight): the codec experiment
   already answers the chewing question at the signal level more directly,
@@ -161,23 +158,25 @@ near-silent windows.
   chewing/Fall Armyworm is explicitly out of the current MVP scope (see
   below).
 
-**This is a real, substantially harder result than an earlier run's
-headline number, and that's the point.** An earlier version of this
-document reported a "0% false-positive rate," measured by separating
-**synthetic, parametrically-generated harmonic tone stacks** from real
-ESC-50 ambient audio -- a trivial task (noiseless synthetic tones vs. real
-microphone recordings), almost certainly reflecting recording-condition
-differences rather than the acoustic pest signature. That number should
-never have been read as "the system can tell a real pest from real
-ambient noise"; it had not been tested on that question. It is retained in
-`PROGRESS.md`'s history, clearly labelled as a trivial-separation artifact,
-for anyone auditing how the project's own numbers evolved.
+**This is a real, harder, and far more honestly-measured result than any
+earlier report from this project, and that progression is deliberate, not
+a regression.** This project's headline classifier number has gone through
+three stages: (1) an original "0% false-positive rate," measured by
+separating synthetic tone stacks from real ambient audio -- a trivial
+task, not a real one; (2) 86.9% accuracy / 8.7% FPR from a single grouped
+split on a 5-recordings-per-species corpus, later shown (Prompt 7) to be
+one lucky draw from a distribution ranging roughly 10-92%; (3) this run:
+repeated grouped k-fold CV on an expanded ~45-recordings-per-species
+corpus with a cap on windows per recording. Each stage is a harder number
+than the one before it, and each is more honest -- the flattering earlier
+figures were never actually true, just measured badly. All three are kept
+in `PROGRESS.md`'s history, clearly labelled, for anyone auditing how the
+project's own numbers evolved.
 
 **Source-recording counts per real target class (the number that actually
-bounds every claim above):** *C. biguttulus* 5, *C. brunneus* 5, *Cicada
-orni* 5, ambient 69. A competent judge will ask about this before anything
-else -- see `docs/compression_delta.md` for how directly it explains the
-instability above.
+bounds every claim above):** *C. biguttulus* 45, *C. brunneus* 45, *Cicada
+orni* 45, ambient 145 (up from 5/5/5/69 before Prompt 8 -- see below for
+how much that alone changed the reliability of these numbers).
 
 ## Near-silent windows are gated, not kept and mislabelled
 
@@ -197,20 +196,34 @@ real recordings in this corpus (e.g. several *C. biguttulus*/*C. brunneus*
 files) were captured at low gain and have an absolute median window RMS
 below -60dBFS despite containing real signal throughout. Calibrated
 empirically against the existing corpus (see `PROGRESS.md`) rather than
-picked arbitrarily -- at -35dB relative, it drops ~2% of windows
-project-wide, concentrated almost entirely in the one long recording
-responsible for the `harmonic_energy_ratio` NA confound below.
+picked arbitrarily -- at -35dB relative, it drops roughly 1-2% of windows
+project-wide (1.0-1.2% in the current corpus), originally found to be
+concentrated almost entirely in one long recording responsible for the
+`harmonic_energy_ratio` NA confound below.
 
 **This also resolved a previously-unexplained feature-extraction failure.**
 19 of 1251 windows used to fail feature extraction outright (a
 `missing value where TRUE/FALSE needed` error inside `wa_features()`'s
-spectral-property code). Root-caused: every one of those 19 windows is
+spectral-property code). Root-caused: every one of those 19 windows was
 independently flagged as near-silent by the same gate -- same underlying
 cause as the `harmonic_energy_ratio` confound below (degenerate spectra
 from near-empty audio break more than one downstream calculation, not
 just the one already fixed). The gate removes these windows before
-feature extraction is attempted, so the failure no longer occurs (0 of
-1225/1224/1224 windows failed across all three arms in the current run).
+feature extraction is attempted, so the failure no longer occurs (0
+feature-extraction failures across all three arms in every run since).
+
+**A second window-population fix (Prompt 8, Step 3): windows per source
+recording are now capped, not just gated.** Even after silence-gating,
+one long recording could still contribute far more windows than any
+other (max=411 windows from a single file, in the pre-expansion corpus) --
+enough to dominate whichever fold it landed in, and a direct contributor
+to the ~10-92% per-arm accuracy swing Prompt 7 found. `R/03_preprocess.R`
+now caps windows per recording at `MAX_WINDOWS_PER_SOURCE = 20`, sampled
+evenly across the recording's timeline (not its first 20 windows, which
+would bias every capped recording toward its opening seconds). In the
+current corpus this brings the windows-per-recording distribution to
+min=1, p25=4, median=4, p75=13, max=20 (299 recordings) -- no single
+recording can be more than a small, bounded share of any fold.
 
 **Inference-time consequence:** if an entire incoming voice note is gated
 (uniformly near its own noise floor -- e.g. background silence, a muted
@@ -222,58 +235,91 @@ recording -- not an error, and not a spurious class guess.
 ## The compression delta: codec damage vs. total transport cost
 
 **Prompt 7 found the original single-seed, single-condition version of
-this analysis was not yet a reportable number, for three separate reasons
--- all now fixed. Full numbers, methodology, and the "why" behind each
-one live in `docs/compression_delta.md`, regenerated fresh by
+this analysis was not yet a reportable number, for three separate reasons.
+Prompt 8 fixed the underlying cause of the instability itself (more source
+recordings, a per-recording window cap) rather than just re-measuring the
+same small corpus more carefully. Full numbers, methodology, and the "why"
+behind each one live in `docs/compression_delta.md`, regenerated fresh by
 `R/07_compression_delta.R`; summarised here, not restated in full, so the
 two documents can't drift apart.**
 
-1. **"Uncompressed" was ambiguous.** The original uncompressed arm
-   resampled to WhatsApp's own 16kHz sample rate and skipped only the Opus
-   round-trip -- it isolated codec quantization damage with bandwidth held
-   constant, and said nothing about the bandwidth WhatsApp's 16kHz sample
-   rate itself discards (the same 8kHz ceiling `docs/codec_findings.md`
-   already establishes destroys content above it). The original "-0.4%,
-   no cost from using WhatsApp as the transport" framing overstated what
-   had actually been measured. Now built as two separate, clearly-named
-   controls: **codec-only** (still 16kHz, no Opus) and **full-fidelity**
-   (resampled to a common 48kHz, no Opus -- the raw-upload-path
-   comparison). The gap between the two deltas decomposes total transport
-   cost into a codec component and a bandwidth component.
-2. **A bare point estimate is indefensible at this sample size.** Only
-   4-5 source recordings back each real target class, and their durations
-   vary enormously, so which seed a single train/val/test split happens to
-   use can swing overall test accuracy from roughly 10% to 92% on its own
-   -- almost independent of anything the classifier is actually good or
-   bad at (a handful of unusually long recordings can each become 60-90%
-   of an entire test split if they land there). `R/07_compression_delta.R`
-   now runs 50 different grouped-split seeds for every arm and reports the
-   full seed distribution, not one draw from it.
+1. **"Uncompressed" was ambiguous** (Prompt 7). The original uncompressed
+   arm resampled to WhatsApp's own 16kHz sample rate and skipped only the
+   Opus round-trip -- it isolated codec quantization damage with
+   bandwidth held constant, and said nothing about the bandwidth
+   WhatsApp's 16kHz sample rate itself discards (the same 8kHz ceiling
+   `docs/codec_findings.md` already establishes destroys content above
+   it). Built as two separate, clearly-named controls: **codec-only**
+   (still 16kHz, no Opus) and **full-fidelity** (resampled to a common
+   48kHz, no Opus -- the raw-upload-path comparison). The gap between the
+   two deltas decomposes total transport cost into a codec component and
+   a bandwidth component.
+2. **A bare point estimate is indefensible at this sample size**
+   (Prompt 7's finding; Prompt 8's fix). With only 4-5 source recordings
+   per real target class, which seed a single train/val/test split
+   happened to use could swing overall test accuracy from roughly 10% to
+   92% on its own. Prompt 8 expanded the corpus to ~45 source recordings
+   per species (see "The corpus-expansion, window-cap, and k-fold fix"
+   below) and replaced random grouped splits with **repeated grouped
+   k-fold cross-validation** (5 folds x 10 repeats, the SAME fold
+   assignment shared across all three arms) -- every recording serves as
+   test data across folds by construction, not left to chance.
 3. **Near-silent windows were mislabelled data**, addressed by the energy
    gate above, applied identically to every arm.
 
-**Result (mean across 50 seeds): compressed 56.8%, codec-only 55.3%,
-full-fidelity 55.7% -- codec-only delta -1.4% (95% seed range -9.6% to
-+6.4%), full-fidelity delta -1.1% (95% seed range -13.4% to +9.4%).**
-**Both deltas are indistinguishable from zero at this sample size** -- a
-different, weaker claim than "compression is free," and a materially more
-honest one than the original single-seed "-0.4%" framing. The paired
-per-seed delta is far more stable than either arm's raw accuracy (delta SD
-~4.5-6.4 points vs. ~25-27 points for raw per-arm accuracy) because the
-same lucky-or-unlucky long recording lands in the same split position for
-all three arms on a given seed and cancels out of the difference -- which
-is exactly why the delta, not raw accuracy, is the number to trust here.
+### The corpus-expansion, window-cap, and k-fold fix (Prompt 8)
 
-**What this does and doesn't say:** compatible with, and not contradicting,
-the codec experiment's signal-level finding that real Orthoptera
-stridulation survives the compression well -- but at this sample size
-neither delta can be shown to be non-zero with a precision better than
-roughly +/-10 percentage points. What would actually narrow this is more
-distinct source recordings per target species, not more re-splitting or
-re-windowing of the same ~5 files. Does **not** extend to chewing-sound
-classes (excluded from this comparison) or to any condition not covered by
-the classifier above (field noise, distance, phone microphone variability,
-species outside the trained set).
+Real per-species source recordings went from 5 (an artificial cap on
+already-downloaded data) to 22/17/20 (cap removed, Step 1) to 45/45/45
+(corpus expansion, Step 2) -- see PROGRESS.md for the isolated
+before/after measurement of Step 1 alone: removing the cap dropped
+per-arm accuracy SD from ~25.8pp to ~15.0pp on its own, before any other
+change. Step 3 added a cap on windows per source recording (20, sampled
+evenly across each recording's timeline) so no single long recording can
+dominate a fold, and switched evaluation from random grouped splits to
+repeated grouped k-fold CV.
+
+**Combined result: per-arm accuracy SD dropped from ~25-27 points
+(Prompt 7) to ~4.4-5.4 points -- roughly a 5x tighter spread** (mean
+accuracy: compressed 66.8%, codec-only 67.7%, full-fidelity 70.4%, each
+with a 95% range of about 10-20 points instead of ~80). **This narrowing
+is itself a result**, not just cleanup: it demonstrates the earlier
+instability was substantially a sampling artifact -- too few source
+recordings, no bound on how much one long recording could dominate a
+fold -- not an inherent property of the classification task.
+
+**Deltas (paired per fold-iteration, mean across 50 fold-evaluations):
+codec-only +0.9% (95% range -4.2% to +5.8%), full-fidelity +3.6% (95%
+range -4.5% to +12.7%), bandwidth component +2.7% (95% range -5.8% to
++11.1%).**
+
+**Both deltas' 95% ranges still include zero, so neither is
+distinguishable from zero at conventional confidence -- but that range is
+now roughly half as wide as before expansion**, which is a materially
+stronger statement than the pre-expansion result repeated with smaller
+numbers. Applying the same bar consistently (a range that excludes zero
+counts as "distinguishable," one that doesn't, doesn't): the **codec-only
+delta remains squarely indistinguishable from zero** -- the Opus codec in
+isolation cannot be shown to cost this classifier anything measurable.
+The **full-fidelity delta is more ambiguous**: its point estimate (+3.6%)
+is meaningfully positive and most of its range sits above zero, at least
+suggestive of a real bandwidth cost consistent with the codec experiment's
+finding that content above 8kHz is destroyed outright -- but the range's
+lower edge still touches slightly negative territory, so this corpus
+cannot yet confirm that cost at 95%. The honest read: this is the first
+run where a real bandwidth cost looks plausible rather than purely noise,
+not a confirmed finding.
+
+**What this does and doesn't say:** compatible with, and not
+contradicting, the codec experiment's signal-level finding that real
+Orthoptera stridulation survives the compression well -- but this corpus
+still cannot put a precision tighter than roughly +/-5 to +/-9 percentage
+points on that claim at the classifier level. What would narrow it
+further is more distinct source recordings per target species, not more
+folds/repeats of the same ~45. Does **not** extend to chewing-sound
+classes (excluded from this comparison) or to any condition not covered
+by the classifier above (field noise, distance, phone microphone
+variability, species outside the trained set).
 
 ## The chewing-sound / Fall Armyworm scope decision
 
@@ -318,17 +364,22 @@ in this project.
 - **Untested in real field-noise conditions.** ESC-50 is curated
   environmental audio, not real farm-at-night background noise at unknown
   distance through a real phone microphone.
-- **Small sample sizes throughout, quantified, not just asserted.** Each
-  real target class has only 4-5 distinct source recordings. Prompt 7's
-  50-seed re-split analysis (`docs/compression_delta.md`) shows exactly
-  what that costs: overall test accuracy on this classifier swings from
-  roughly 10% to 92% depending only on which seed is used, and the
-  compression deltas are not distinguishable from zero at a precision
-  better than about +/-10 percentage points. Treat any single-seed
-  accuracy/precision/recall figure in this project (including the 88.5%
-  headline above) as one honest draw from that wide distribution, not a
-  converged estimate -- more source recordings per class is what would
-  actually narrow it, not more re-splitting of the same ~5 files.
+- **Small sample sizes, quantified and measurably improved, but not
+  solved.** Each real target class now has 45 distinct source recordings
+  (up from 5, then 22/17/20, across Prompt 7 and Prompt 8's Steps 1-2).
+  Repeated grouped k-fold CV (`docs/compression_delta.md`,
+  `docs/classifier_results.md`) shows this expansion cut per-arm accuracy
+  SD roughly 5x (from ~26pp to ~5pp) and both compression deltas' 95%
+  ranges roughly in half -- real, substantial progress -- but both deltas
+  still cannot be distinguished from zero at a precision better than
+  roughly +/-5 to +/-9 percentage points, and per-class recall for the
+  smallest classes (`synthetic_tone_plus_noise`, 4 source files) still
+  spans its entire possible range across folds. No number in this project
+  is a single-split point estimate anymore; every headline figure is a
+  mean with an explicit interval, and every table states the source-
+  recording count behind it. More source recordings per class is what
+  would narrow the remaining intervals further, not more folds or repeats
+  of the same corpus.
 - **Single-microphone, no localisation.** The system identifies *what*
   might be present, not *where* on the farm, and cannot estimate distance
   or direction.

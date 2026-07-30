@@ -119,10 +119,12 @@ in *Scientific Data*. Zenodo: [10.5281/zenodo.18554693](https://zenodo.org/recor
 This dataset's own distribution (three 16-51GB zips) is too large for this
 project's 2GB data-download budget. `R/01_download_data.R` instead downloads
 only the dataset's small annotation CSV and fetches individual recordings
-directly from their original source URLs -- 59 real files across 3 species:
-***Chorthippus biguttulus***, ***Chorthippus brunneus*** (European field
-grasshoppers) and ***Cicada orni*** (Mediterranean cicada). **None of these
-are locusts.** This project's honest claim is "validated on Orthoptera
+directly from their original source URLs -- 45 real files each (135 total)
+across 3 species: ***Chorthippus biguttulus***, ***Chorthippus brunneus***
+(European field grasshoppers) and ***Cicada orni*** (Mediterranean cicada),
+selected via a HEAD-probe size filter that prefers many short clips over a
+few long ones (skips anything over ~20MB, or of unknown size). **None of
+these are locusts.** This project's honest claim is "validated on Orthoptera
 stridulation using European grasshoppers as acoustic proxies" -- never
 "validated on locusts" -- since InsectSet459 contains no *Schistocerca* or
 *Locusta* at all. See `docs/methodology.md` for why these species were
@@ -148,19 +150,26 @@ before any commercial deployment.
 
 ## Measured results (real audio, not estimates)
 
+Every number below is a **mean with an interval from repeated grouped
+k-fold cross-validation (5 folds x 10 repeats)**, not a single split --
+see `docs/methodology.md` for why a single split was never defensible on
+a corpus this size, and for the full before/after story of fixing it.
+
 - **Codec survivability:** real Orthoptera/Cicadidae stridulation survives
   the WhatsApp Opus/Ogg round-trip well (0.956-0.986 across the 3 real
   species). Real chewing-sound survivability is poor-to-moderate
   (0.342-0.892) and was measured under best-case contact-sensor capture,
   not realistic open-air conditions -- see `docs/codec_findings.md`.
-- **Classifier:** 86.9% overall test accuracy, 8.7% false-positive rate
-  against real ambient audio, trained/evaluated on real pest audio vs. real
-  ESC-50 ambient audio (109 source files, grouped train/val/test split) --
-  see `docs/classifier_results.md`.
-- **Compression cost:** -0.4% accuracy delta between WhatsApp-compressed
-  and uncompressed audio on the same classifier and split -- essentially no
-  detectable cost from using WhatsApp as the transport, for these classes
-  -- see `docs/compression_delta.md`.
+- **Classifier:** 66.8% mean test accuracy (sd 5.4pp, 95% range 55.7-74.7%),
+  22.3% mean false-positive rate against real ambient audio (sd 7.1pp,
+  range 8.3-35.8%), trained/evaluated on real pest audio vs. real ESC-50
+  ambient audio (45 source recordings per real target species, 145
+  ambient) -- see `docs/classifier_results.md`.
+- **Compression cost:** codec-only delta +0.9% (95% range -4.2% to +5.8%,
+  indistinguishable from zero), full-fidelity delta +3.6% (95% range -4.5%
+  to +12.7%, suggestive of a real bandwidth cost but not yet confirmed at
+  95%) -- see `docs/compression_delta.md` for the codec-vs-bandwidth
+  decomposition.
 - None of the above has been tested against a genuine WhatsApp-exported
   voice note end to end; see `docs/methodology.md`'s limitations section.
 

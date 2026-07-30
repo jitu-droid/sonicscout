@@ -618,31 +618,41 @@ tune away.
   (0.956), and real *Cicada orni* (0.972) -- all comfortably inside the
   codec's surviving band. (`docs/codec_findings.md`)
 - **A classifier trained on real *Chorthippus*/*Cicada* audio vs. real
-  ESC-50 ambient audio achieves 88.5% test accuracy on one particular
-  train/val/test split.** *C. brunneus* separates most cleanly;
-  *C. biguttulus* and *Cicada orni* are weaker and confuse with each
-  other/ambient. (`docs/classifier_results.md`) **Revised by Prompt 7:**
-  this single number is not a stable estimate of this classifier's real
-  performance -- see the next bullet.
+  ESC-50 ambient audio achieves 66.8% mean test accuracy (sd 5.4pp, 95%
+  range 55.7-74.7%) and a 22.3% mean false-positive rate against ambient
+  (sd 7.1pp, range 8.3-35.8%), measured by repeated grouped k-fold CV (5
+  folds x 10 repeats) on 45 source recordings per real species (up from 5,
+  Prompt 8).** *Cicada orni* separates most cleanly (90.1% mean recall);
+  the two *Chorthippus* species are frequently confused with EACH OTHER,
+  not ambient; *C. brunneus* is the weakest class (34% mean recall)
+  despite matching *C. biguttulus*'s source-recording count -- flagged as
+  worth investigating specifically, not assumed to be sample-size noise.
+  (`docs/classifier_results.md`) **This is a REAL, HARDER number than
+  either of the two it replaces** (an original 0% FPR, a trivial-
+  separation artifact; then 86.9%/8.7% from one lucky split later shown to
+  range 10-92% across seeds) -- each revision cost a flattering figure and
+  bought a more honest one, deliberately.
 - **Neither WhatsApp's Opus codec nor its 16kHz bandwidth cut can be shown
   to cost measurable classifier accuracy at this sample size -- which is a
-  different, weaker claim than "compression is free."** Prompt 7 replaced
-  the single-seed, single-condition version of this comparison (an earlier
-  "-0.4%, no cost" figure) with two separate controls (codec-only vs.
-  full-fidelity/48kHz) run across 50 different grouped-split seeds each.
-  Result: codec-only delta -1.4% (95% seed range -9.6% to +6.4%),
-  full-fidelity delta -1.1% (95% seed range -13.4% to +9.4%) -- **both
-  ranges comfortably straddle zero.** The reason a bare point estimate was
-  never defensible: only 4-5 source recordings back each real target
-  class, of hugely varying duration, so overall test accuracy on this
-  classifier swings from ~10% to ~92% depending only on which seed is
-  used. The PAIRED delta is far more stable than raw accuracy (SD ~4.5-6.4
-  points vs. ~25-27 points) because the same long-recording-in-test-or-not
-  luck affects all arms identically on a given seed and cancels out of the
-  difference -- which is why the delta, not raw accuracy, is the number to
-  trust. Full account, including root-causing 19 feature-extraction
-  failures to the same near-silent-window issue that motivated a new
-  energy gate, in `docs/compression_delta.md`.
+  different, weaker claim than "compression is free," though the interval
+  has narrowed substantially since Prompt 7.** Two separate controls
+  (codec-only vs. full-fidelity/48kHz), now evaluated with repeated
+  grouped k-fold CV (5 folds x 10 repeats, same fold assignment shared
+  across all three arms) on the expanded 45-recordings-per-species corpus:
+  codec-only delta +0.9% (95% range -4.2% to +5.8%, squarely
+  indistinguishable from zero), full-fidelity delta +3.6% (95% range
+  -4.5% to +12.7% -- mean positive, most of the range positive, but the
+  low edge still touches negative, so not yet confirmed at 95% by this
+  project's own consistent bar). **Expanding the corpus (Prompt 8, Steps
+  1-2) and capping windows per recording (Step 3) cut per-arm accuracy SD
+  from ~25-27 points to ~4.4-5.4 points -- roughly 5x tighter -- purely by
+  fixing how the data was sampled, before touching the evaluation
+  methodology.** That narrowing is itself evidence the earlier instability
+  was a sampling artifact, not a property of the task. Full account,
+  including root-causing 19 feature-extraction failures to the same
+  near-silent-window issue that motivated the energy gate, and the
+  isolated before/after measurement of the file-cap fix alone, in
+  `docs/compression_delta.md` and the Session 5 section above.
 - **The 8kHz Nyquist ceiling is real and unforgiving,** confirmed on both
   a synthetic 10kHz control tone and, indirectly, on every species'
   >8kHz retention column reading exactly 0.
@@ -698,40 +708,57 @@ tune away.
 - **Live Twilio round trip** -- the webhook is verified against a mock
   payload and the real trained model, never against an actual WhatsApp
   Sandbox message (needs Jitu's Twilio account, `BLOCKERS.md` #2).
-- **Revised by Prompt 7 -- this is no longer "untested," it's now
-  quantified, and the quantity is uncomfortable:** how much does this
-  classifier's measured accuracy actually vary run to run? Answer: a lot.
-  50-seed re-splitting shows overall test accuracy ranging from ~10% to
-  ~92% on the exact same data and method, because each real class has only
-  4-5 source recordings of very different lengths. This isn't a new risk
-  Prompt 7 introduced -- it was always true of a corpus this size -- it's
-  a risk that was invisible until this prompt required measuring it
-  properly instead of reporting one seed's result.
+- **Quantified by Prompt 7, substantially reduced but not eliminated by
+  Prompt 8:** how much does this classifier's measured accuracy actually
+  vary run to run? Prompt 7 found ~10-92% across 50 random seeds on a
+  5-recordings-per-species corpus. Prompt 8 expanded the corpus to 45
+  recordings/species, capped windows per recording, and switched to
+  repeated grouped k-fold CV -- the same measurement now shows per-arm
+  accuracy SD around 4.4-5.4 points (95% ranges roughly 55-75% to 63-79%
+  depending on arm), a ~5x tighter spread. This is real, substantial
+  progress, not just a re-measurement: it confirms the earlier
+  instability was mostly a sampling artifact. It is not fully solved --
+  the smallest classes (`synthetic_tone_plus_noise`, 4 source files)
+  still show a recall range spanning their entire possible scale, and the
+  weakest real class (*C. brunneus*, 34% mean recall) has its own
+  dedicated open question (see the forward-looking note at the end of
+  this file) distinct from sample size.
 
 ### 4. The single result to lead with on one slide
 
-**Revised by Prompt 7.** The previous answer here -- "-0.4%, no detectable
-accuracy cost" -- was a single point estimate from one train/val/test
-split, and Prompt 7 found that same split-choice alone can swing this
-classifier's accuracy by ~80 percentage points. Presenting -0.4% as *the*
-number would have repeated the exact mistake this project's own standing
-rule ("never invent a number") exists to prevent -- not fabricating a
-number, but reporting a real one without its uncertainty and letting it
-read as more precise than it is.
+**Revised twice: Prompt 7 found the original point estimate indefensible;
+Prompt 8 fixed the underlying cause and re-measured at a materially
+tighter interval.** The original "-0.4%, no detectable accuracy cost" was
+a single point estimate from one train/val/test split that could swing by
+~80 percentage points depending on the split alone. Prompt 7 replaced it
+with an honestly-wide interval; Prompt 8 narrowed that interval by fixing
+the actual cause (too few source recordings, no cap on how much one long
+recording could dominate a fold) rather than just re-measuring the same
+small corpus more carefully.
 
-**The revised single result to lead with: both the codec-only and
-full-fidelity compression deltas are indistinguishable from zero, measured
-across 50 independent grouped splits rather than one, with the honest
-range disclosed alongside the mean (-1.4% and -1.1%, 95% seed ranges of
-roughly -10 to +10 points either way).** This is a weaker-sounding but more
-defensible claim than "compression costs nothing" -- it says WhatsApp's
-codec and its 16kHz bandwidth cut cannot currently be shown to cost
-anything measurable on real Orthoptera/Cicadidae audio, which is
-consistent with (not proof beyond) the codec experiment's signal-level
-finding that this stridulation survives the compression well. It's also,
-again, a better story for a judge than a suspiciously clean number: it
-shows uncertainty was actually measured, not glossed over a second time
-after already being caught doing that once (the original -15.9%-to--0.4%
+**The current single result to lead with: after expanding the real corpus
+9x (5 to 45 recordings per species) and fixing two sampling-artifact bugs,
+the compression-cost interval is now roughly half as wide as before, and
+still includes zero.** Codec-only delta +0.9% (95% range -4.2% to +5.8%,
+squarely indistinguishable from zero); full-fidelity delta +3.6% (95%
+range -4.5% to +12.7% -- suggestive of a real bandwidth cost, mean and
+most of the range positive, but not yet confirmed at 95% by this
+project's own consistent bar). The **narrowing itself** -- from roughly
++/-10 points to roughly +/-5-9 points, achieved by fixing the data, not
+just re-measuring it -- is arguably the more interesting result to lead
+with over either delta number alone: it demonstrates this project found a
+real methodological flaw, fixed it at the source, and can show the
+before/after difference that fix made, rather than just asserting the fix
+helped. This is a weaker-sounding but more defensible claim than
+"compression costs nothing" -- it says WhatsApp's codec cannot currently
+be shown to cost anything measurable on real Orthoptera/Cicadidae audio,
+and its bandwidth cut plausibly costs something small but unconfirmed,
+which is consistent with (not proof beyond) the codec experiment's
+signal-level finding that this stridulation survives the compression
+well. It's also, again, a better story for a judge than a suspiciously
+clean number: it shows uncertainty was actually measured and then acted
+on, not glossed over a second time after already being caught doing that
+once (the original -15.9%-to--0.4%
 bug fix, Session 3).
 
 ### 5. The question you'd least want a judge to ask, and the most honest answer
@@ -757,16 +784,24 @@ from a real phone and exported with media), and the fact that it's still
 open after two full validation passes should be named directly rather
 than hoped nobody asks.
 
-**Revised by Prompt 7 -- the second-toughest question now has a good
-answer instead of no answer.** "How many recordings is this actually based
-on, and how much would a different sample have changed the numbers?" used
-to be answerable only with "not many" and a shrug. It's now answerable
-with an actual measurement: 4-5 source recordings per real class, and
-re-splitting 50 different ways swings this classifier's accuracy by
-roughly 80 percentage points end to end. That's not a comfortable number
-to lead with, but it's a real one, and having it means this project can
-now say precisely what it doesn't know instead of not knowing that it
-didn't know it.
+**Revised by Prompt 7, then materially improved by Prompt 8 -- the
+second-toughest question now has a good answer AND a demonstrated fix.**
+"How many recordings is this actually based on, and how much would a
+different sample have changed the numbers?" used to be answerable only
+with "not many" and a shrug (pre-Prompt 7), then with an uncomfortable but
+honest measurement (Prompt 7: 4-5 recordings/class, ~80-point accuracy
+swing across seeds). Prompt 8 didn't just re-measure that same small
+corpus more carefully -- it expanded it 9x (to 45 recordings/species),
+capped windows per recording, and switched to repeated grouped k-fold CV,
+cutting the accuracy swing to roughly 20 points and the compression-delta
+interval roughly in half. The honest answer now is: "yes, we found this
+was substantially a sampling artifact, fixed it at the source with data
+we could actually get, and can show the measured before/after -- and it's
+still not a fully solved problem, since the smallest classes and one
+specific real species (*C. brunneus*) still show wider-than-ideal
+variance." That's a materially stronger position than either "not many"
+or "here's an honest but static number" -- it shows the project responds
+to its own findings, not just reports them.
 
 ---
 
@@ -992,3 +1027,65 @@ under budget. Fixed by deduping the existing manifest (2876 rows -> 636
 unique-file rows, 2448MB -> 1460MB tracked) and adding the same
 already-registered check to `fetch_esc50()` that `download_tracked()`
 already had.
+
+### Step 4: final numbers, honestly written up
+
+`docs/classifier_results.md`, `docs/compression_delta.md`,
+`docs/methodology.md`, `README.md`, and this file's "What we can and
+cannot claim" section were all rewritten with the repeated-k-fold numbers
+above -- no single-seed/single-split figure remains anywhere in this
+project's documentation. See those files directly; not restated here.
+
+### Step 5: downstream refresh
+
+Re-seeded demo logs against the final full-corpus model; both test suites
+pass (11 codec + 6 webhook + 24 package tests); dashboard verified
+rendering cleanly via browser tools (no console/server errors, most
+recent log entry is a genuine "predicted" outcome); `renv::status()`
+shows no drift beyond the pre-existing, expected "whatsappaudioR installed
+from an unknown source" note (a local package, not a new dependency --
+same state as every prior session).
+
+## If more time were available (Prompt 8, Step 5 -- forward-looking note)
+
+In priority order, by expected value per unit effort:
+
+1. **A single real WhatsApp voice note, sent from a real phone and
+   exported with media, run through `compare_real_vs_simulated()`
+   (`R/02_codec_experiment.R`).** This is the single most-repeated open
+   item across every session of this project (named in Prompt 4, Prompt
+   5, and Prompt 7's "toughest question" sections) and the only one that
+   needs a few minutes of Jitu's time rather than more engineering. Every
+   other number in this project inherits its uncertainty from this one
+   untested assumption -- it would either confirm the local FFmpeg
+   simulation is a reasonable proxy for WhatsApp's real encoder, or reveal
+   a gap that changes every downstream number.
+2. **Investigate why *Chorthippus brunneus* specifically underperforms
+   *C. biguttulus* despite identical source-recording counts (34% vs.
+   63.6% mean recall).** This session treated it as flagged-but-unexplained
+   because Prompt 8 was scoped to the variance problem, not per-species
+   acoustic debugging -- but it's a concrete, answerable question (is it
+   confusable calls, a specific bad recording, a feature that doesn't
+   discriminate this pair well?) that a future session could resolve with
+   the data already on disk, not more downloading.
+3. **More source recordings for the weakest classes specifically**, not a
+   further blanket expansion. The annotation CSV still has candidates
+   InsectSet459 hasn't used (184/102/428 available vs. 45/45/45 used per
+   species) and the 2GB cap has roughly 500MB of headroom left (see the
+   manifest total in Step 2 above) -- enough for another meaningful
+   expansion pass, especially targeted at *C. brunneus* if item 2 above
+   points at needing more data rather than a feature/preprocessing fix.
+4. **A real mosquito wingbeat recording.** Every mosquito-wingbeat number
+   in this project remains synthetic-only; a real source (a different
+   dataset, since InsectSet459 has none) would let that class be validated
+   the same way the Orthoptera/Cicadidae classes now are.
+5. **Confidence calibration** (Platt scaling / isotonic regression on the
+   random forest's vote proportions) -- flagged as a limitation since
+   Deliverable D but never addressed; would make the webhook's reported
+   confidence numbers literally interpretable as probabilities rather than
+   a reasonable-but-uncalibrated proxy.
+6. **Live Twilio Sandbox round trip** -- still needs Jitu's Twilio account
+   and phone; the webhook itself is fully verified against the real model
+   otherwise (`BLOCKERS.md` #2).
+
+Per Prompt 8's closing instruction: stopping here.

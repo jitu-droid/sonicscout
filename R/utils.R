@@ -21,8 +21,27 @@ FULL_FIDELITY_SAMPLE_RATE <- 48000L
 # 03_preprocess.R (training-side windowing) and 06_predict.R (inference-side
 # windowing), so a voice note is split into windows the same way whether it's
 # training data or a live incoming WhatsApp recording -- see gate_silent_windows().
-WINDOW_SECONDS       <- 2.0
-HOP_SECONDS          <- 1.0
+#
+# WINDOW_SECONDS raised 2.0 -> 4.0 (Prompt 9). Reason: the temporal features
+# added this prompt (syllable/pulse rate, inter-pulse intervals, envelope
+# modulation spectrum, phrase-level structure) exist specifically to capture
+# the acoustic dimension that actually separates Chorthippus biguttulus from
+# C. brunneus -- and the literature is explicit that a full song PHRASE in
+# these species runs ~2-4 seconds (~20 syllables/phrase at a ~10Hz syllable
+# repetition rate: von Helversen & von Helversen 1997, J Comp Physiol A
+# 180:373-386). A 2-second window could not reliably contain one full
+# phrase; 4 seconds sits at the upper edge of the documented range so it
+# usually can. Checked empirically before changing it (not just asserted):
+# real recordings for the 3 target species have a median duration of
+# 14-17s, with only 0-9% under 6 seconds -- so lengthening the window
+# doesn't meaningfully shrink the number of recordings that can still
+# produce multiple windows. HOP_SECONDS scales with it (kept at the same
+# 50% overlap ratio as before: 2.0/4.0 = 1.0/2.0) rather than changed
+# independently. See MAX_WINDOWS_PER_SOURCE below (R/03_preprocess.R) for
+# why the per-recording window cap was reconsidered and kept, not changed,
+# alongside this.
+WINDOW_SECONDS       <- 4.0
+HOP_SECONDS          <- 2.0
 SILENCE_THRESHOLD_DB <- -35  # edge-silence trim, relative to a clip's own peak frame
 
 # ENERGY_GATE_DB (Prompt 7, Issue 3): drops windows/frames that are near-silent

@@ -39,3 +39,47 @@ test_that("harmonic_energy_ratio_from_spectrum returns 0, not NA, with no well-d
   expect_equal(fn(spec, f0_hz = NA_real_), 0)
   expect_equal(fn(cbind(freq = spec[, 1], amp = rep(0, 100)), f0_hz = 100), 0)
 })
+
+test_that("wa_temporal_features returns 0, not NA, on pure digital silence", {
+  # Same discipline as harmonic_energy_ratio above: an NA here would
+  # silently drop the whole window from complete.cases()-based training
+  # filters (Prompt 9). Tested directly against the internal function,
+  # not through the full wa_features() pipeline, because pure digital
+  # silence separately crashes seewave::specprop() for unrelated reasons
+  # (an existing, documented, out-of-scope limitation -- see this file's
+  # git history) that would obscure what's actually being tested here.
+  sr <- 16000
+  w <- tuneR::Wave(left = integer(sr * 2), samp.rate = sr, bit = 16)
+  f <- whatsappaudioR:::wa_temporal_features(w)
+
+  expect_false(any(is.na(unlist(f))))
+  expect_equal(f$pulse_rate_hz, 0)
+  expect_equal(f$ipi_cv, 0)
+  expect_equal(f$envelope_mod_freq_hz, 0)
+  expect_equal(f$duty_cycle, 0)
+  expect_equal(f$temporal_entropy, 0)
+  expect_equal(f$phrase_duration_s, 0)
+  expect_equal(f$n_phrase_bouts, 0)
+})
+
+test_that("wa_temporal_features detects a known pulse rate on a synthetic pulse train", {
+  # A synthetic amplitude-modulated tone at a known rate is a ground-truth
+  # check that the peak detector isn't wildly wrong -- not a claim that
+  # this matches real grasshopper song (that's validated empirically on
+  # real audio in the classifier results, not asserted in a unit test).
+  sr <- 16000
+  dur <- 2
+  t <- seq(0, dur, by = 1 / sr)
+  pulse_hz <- 20
+  carrier <- sin(2 * pi * 2000 * t)
+  envelope_mod <- (sin(2 * pi * pulse_hz * t) > 0.7)  # sharp, well-separated pulses
+  x <- carrier * envelope_mod
+  w <- tuneR::Wave(left = as.integer(x * 32767 * 0.9), samp.rate = sr, bit = 16)
+
+  f <- whatsappaudioR:::wa_temporal_features(w)
+  expect_false(any(is.na(unlist(f))))
+  # Allow generous tolerance -- this checks the detector finds pulses in
+  # the right ballpark, not exact agreement with the synthesis parameter.
+  expect_gt(f$pulse_rate_hz, pulse_hz * 0.5)
+  expect_lt(f$pulse_rate_hz, pulse_hz * 2)
+})

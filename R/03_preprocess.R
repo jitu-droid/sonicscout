@@ -42,14 +42,19 @@ WINDOWS_MANIFEST   <- file.path(PROCESSED_DIR, "windows_manifest.csv")
 # "same window population" between train and serve.
 
 # Cap on windows contributed by any one source recording (Prompt 8, Step 3)
-# -- see the comment at its use in process_one_file() for why. 20 windows
-# at WINDOW_SECONDS=2.0/HOP_SECONDS=1.0 spans ~21s of a recording's timeline
-# (with 50% overlap) -- enough to still capture real within-call variation
-# for a short recording, while bounding a multi-minute recording's maximum
-# possible share of any one fold to the same order of magnitude as every
-# other recording, not two orders of magnitude more. Training-side only:
-# not applied at inference (R/06_predict.R), where a real incoming voice
-# note is expected to be a single short (10-30s) clip in the first place.
+# -- see the comment at its use in process_one_file() for why. Reconsidered
+# (not just left alone) when WINDOW_SECONDS/HOP_SECONDS changed (Prompt 9,
+# R/utils.R): at the new 4.0s/2.0s (50% overlap, same ratio as before), 20
+# windows spans (20-1)*2+4 = 42s of timeline -- a larger absolute span than
+# the old 2.0s/1.0s setting's ~21s, but the same order of magnitude
+# relative to the corpus's own recording lengths (median 14-17s per real
+# target species -- see R/utils.R's WINDOW_SECONDS comment), so it still
+# binds mainly on the same outlier multi-minute recordings it always did,
+# not on typical ones. Kept at 20 rather than re-tuned, since the goal
+# (bound one recording's maximum share of a fold) doesn't scale with
+# window length. Training-side only: not applied at inference
+# (R/06_predict.R), where a real incoming voice note is expected to be a
+# single short (10-30s) clip in the first place.
 MAX_WINDOWS_PER_SOURCE <- 20
 
 # Synthetic classes that exist purely to ground-truth-check the codec

@@ -191,6 +191,84 @@ survivability 0.981 -> 0.986 on a different 5-file sample) -- reassuring
 that the original finding was a stable property of the species' spectral
 content, not a fluke of which 5 files got picked.
 
+### Prompt 5 Step 3 -- retrain on real audio (found and fixed a manifest bug first)
+
+Cleared `data/processed/` and re-ran `03_preprocess.R`. Expected ~15 real
+pest source files (5 each of the 3 InsectSet459 species) on top of the
+existing real ambient + synthetic classes; got only a handful, and zero
+`chewing_*` labels at all despite 15 real chewing files existing on disk
+(already used successfully in the codec experiment). Root-caused two
+separate real bugs before retraining properly:
+
+1. **`R/fetch_chewing_sounds.R`'s manifest rows were entirely missing.**
+   All 15 chewing sound files were correctly present on disk, but
+   `data/raw/manifest.csv` had zero `USDA-ARS-soundlibrary` rows for them
+   (exact cause in the dead session unrecoverable, but the mechanism is
+   clear: `download_one()`'s `if (file.exists(dest_path)) return(manifest)`
+   skips registering a manifest row whenever the file already happens to
+   be on disk -- so if the manifest is ever regenerated, or a row-write is
+   lost for any reason, an already-downloaded file becomes permanently
+   invisible to `collect_labeled_sources()` with no error). Fixed in both
+   `R/fetch_chewing_sounds.R` and `R/01_download_data.R`'s
+   `download_tracked()`: when the file is already present, check whether
+   it's *also* in the manifest, and backfill the row if not, instead of
+   just trusting the file and moving on. Re-ran `fetch_chewing_sounds.R`,
+   confirmed all 15 rows backfilled.
+2. **The per-subcategory sampling cap grouped by `source`, not `label`,
+   for non-ambient real data.** `MAX_REAL_PER_SUBCATEGORY` was meant to
+   cap real files *per species* (5 each), but the grouping key
+   (`raw_manifest$source`) is the same ("InsectSet459") for all 3
+   InsectSet459 species -- so they were sharing one combined cap of 5
+   total across all 3 species, not 5 each, silently wasting most of the
+   just-deepened 59-file real corpus. Fixed to group by `label` instead.
+
+**Separately made a judgement call to exclude chewing-sound classes from
+the classifier entirely** (`raw_manifest <- raw_manifest[raw_manifest$source
+!= "USDA-ARS-soundlibrary", ]`), documented inline: the codec experiment
+already answered the chewing-sound question directly at the signal level,
+every one of those recordings is a contact-sensor capture (so a classifier
+trained on them would still only measure a ceiling, not real-world
+viability), and the MVP is explicitly scoped away from chewing/Fall
+Armyworm for now. Keeping them out keeps this run's classifier focused on
+what's actually in scope; they remain fully analysed in the codec
+experiment.
+
+Re-ran `03_preprocess.R` -> `04_features.R` -> `05_train.R` with both fixes
+in place: 109 source files (up from 99), 1251 windows, 8 classes. **Real
+results:** 86.9% overall test accuracy, **8.7% false-positive rate against
+real ambient** (vs. the previous run's artifact 0%, exactly the "expect
+these numbers to be much worse" the run instructions predicted).
+*Chorthippus brunneus* separates cleanly (precision 0.991, recall 0.917);
+*C. biguttulus* is weaker and gets confused with *C. brunneus* (10 windows)
+and ambient; *Cicada orni* has low recall (0.462, mostly misread as
+ambient) though perfect precision. Full breakdown, confusion matrix, and
+sample-size caveats in `docs/classifier_results.md`.
+
+### Prompt 5 Step 4 -- compression delta (a striking number that turned out to be a bug)
+
+Ran `R/07_compression_delta.R` for the first time. First result: compressed
+86.9% vs. uncompressed 71.0% -- a -15.9% delta, which would have been a
+genuinely interesting "compression costs accuracy" finding. Didn't take it
+at face value: the run also logged "184 training rows dropped for
+non-finite features" for the uncompressed condition vs. only 8 for
+compressed, a 20x disparity worth explaining before trusting the headline
+number. Traced it to `harmonic_energy_ratio_from_spectrum()` (in
+`pkg/whatsappaudioR/R/wa_features.R`) returning `NA` whenever a window had
+no well-defined peak frequency (near-silent windows) -- and two long real
+recordings had far more such windows in the uncompressed condition
+specifically (genuine silence stays silent; WhatsApp's own lossy
+noise-shaping incidentally raises the noise floor just enough to dodge a
+literal zero-Hz peak). Net effect: the uncompressed model's test accuracy
+was computed on 100 usable windows out of ~217, vs. 221 of ~222 for
+compressed -- not a fair comparison at all, just very different amounts of
+usable test data. Fixed `harmonic_energy_ratio_from_spectrum()` to return 0
+(a legitimate value, not "unknown") in that case, added a regression test,
+reinstalled the package, and re-ran everything. **The delta collapsed to
+-0.4%** (86.9% compressed vs. 86.6% uncompressed) -- no detectable
+accuracy cost from WhatsApp's compression on these classes. Full
+interpretation, including the honest account of chasing down the -15.9%
+artifact, in `docs/compression_delta.md`.
+
 ## Session 2 — autonomous run (Prompt 3)
 
 Starting autonomous run per user's standing authorization (installs, downloads

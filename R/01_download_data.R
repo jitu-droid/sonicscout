@@ -125,6 +125,14 @@ log_blocker <- function(what_tried, error_msg, believed_fix, what_jitu_needs) {
 #' global byte cap. Returns TRUE if the file exists on disk afterwards
 #' (whether freshly downloaded or already cached), FALSE if skipped/failed.
 #'
+#' IMPORTANT: if the file is already on disk but has no manifest row (found
+#' this exact state once already -- a whole USDA-ARS chewing-sound corpus
+#' had downloaded fine but was invisible to collect_labeled_sources() forever
+#' because its manifest rows never got written/were lost), backfill the
+#' entry rather than silently trusting the file and moving on. Otherwise a
+#' lost or partially-regenerated manifest.csv permanently hides real,
+#' already-downloaded data with no error or warning.
+#'
 #' @param timeout_s Per-request timeout. Defaults short (60s) since most
 #'   calls here are small individual audio files; a hung connection to one
 #'   file should fail fast, not block the whole run for up to 30 minutes.
@@ -132,7 +140,16 @@ log_blocker <- function(what_tried, error_msg, believed_fix, what_jitu_needs) {
 #'   ESC-50 zip, which needs ~30 min on this connection's ~0.5MB/s).
 download_tracked <- function(url, dest_path, source, label, license, manifest_env, timeout_s = 60) {
   if (file.exists(dest_path)) {
-    return(TRUE)  # idempotent: trust an already-downloaded file
+    if (!(dest_path %in% manifest_env$manifest$file)) {
+      message("  ", dest_path, " already on disk but missing from the manifest -- backfilling its entry.")
+      manifest_env$manifest <- append_manifest(manifest_env$manifest, list(
+        file = dest_path, source = source, source_url = url, label = label,
+        license = license, md5 = unname(tools::md5sum(dest_path)),
+        bytes = file.info(dest_path)$size,
+        downloaded_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+      ))
+    }
+    return(TRUE)  # idempotent: trust an already-downloaded file's bytes
   }
 
   current_total <- sum(manifest_env$manifest$bytes, na.rm = TRUE)

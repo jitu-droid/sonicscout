@@ -75,8 +75,28 @@ collect_labeled_sources <- function() {
     # was extracted from -- it's not something wa_read() can decode).
     raw_manifest <- raw_manifest[tolower(tools::file_ext(raw_manifest$file)) %in% AUDIO_EXTENSIONS, ]
 
+    # USDA-ARS chewing/feeding recordings are deliberately excluded from the
+    # classifier's training set. The codec experiment (docs/codec_findings.md)
+    # already answered the chewing-sound question directly at the signal
+    # level: every one of those recordings was captured with a contact/
+    # vibration sensor (accelerometer, piezoelectric disk, PVDF film, soil
+    # microphone), never an open-air microphone, so training a classifier on
+    # them would still only be measuring a best-case ceiling, not real-world
+    # viability -- and the MVP is explicitly scoped to stridulation/wingbeat
+    # pests for now (chewing/Fall Armyworm is a stated phase-2 target
+    # requiring a different capture method). Keeping them out of the
+    # classifier's training data keeps this run focused on what's actually
+    # in scope; they remain fully analysed in the codec experiment above.
+    raw_manifest <- raw_manifest[raw_manifest$source != "USDA-ARS-soundlibrary", ]
+
     raw_manifest$is_ambient <- raw_manifest$source == "ESC-50"
-    raw_manifest$subcat_key <- ifelse(raw_manifest$is_ambient, raw_manifest$label, raw_manifest$source)
+    # Cap per LABEL (species), not per source -- grouping by `source` would
+    # lump all 3 InsectSet459 species into one shared cap of
+    # MAX_REAL_PER_SUBCATEGORY total (a real bug found while retraining:
+    # it silently capped 3 species combined at 5 files instead of 5 each,
+    # wasting most of the deepened real corpus). ESC-50 still groups by its
+    # finer ambient category (`label`), same as before.
+    raw_manifest$subcat_key <- raw_manifest$label
     set.seed(20260729)
     for (key in unique(raw_manifest$subcat_key)) {
       subset_idx <- which(raw_manifest$subcat_key == key)

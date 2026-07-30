@@ -17,6 +17,7 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+data/processed_uncompressed/
 data/codec_experiment/real/*
 !data/codec_experiment/real/.gitkeep
 

@@ -78,13 +78,29 @@ wa_features <- function(wave, wl = 1024) {
 
 #' Fraction of spectral energy near the first `n_harmonics` integer
 #' multiples of `f0_hz`. See "Details" on [wa_features()] for caveats.
+#'
+#' Returns 0 (not NA) when there's no well-defined peak frequency to anchor
+#' harmonics to (a DC-dominant/near-silent window) or no spectral energy at
+#' all -- both are legitimate "no measurable harmonic structure" readings,
+#' not failures to compute. This matters in practice: returning NA here
+#' silently drops the whole window from `complete.cases()`-based training
+#' filters downstream, and near-silent windows are common in real (as
+#' opposed to hand-trimmed) field recordings with quiet gaps between call
+#' bouts. Found via a real confound while comparing compressed vs.
+#' uncompressed classifier accuracy (R/07_compression_delta.R): a couple of
+#' long, quiet real recordings were dropping >100 windows' worth of test
+#' data in the uncompressed condition (where genuine silence stays silent)
+#' but far fewer in the compressed condition (where the codec's own
+#' noise-shaping incidentally raises the noise floor just enough to avoid
+#' a literal zero-Hz peak) -- an artifact of this function's NA branch, not
+#' a real property of compression.
 #' @noRd
 harmonic_energy_ratio_from_spectrum <- function(spec, f0_hz, n_harmonics = 5, tol_hz = 50) {
-  if (is.na(f0_hz) || f0_hz <= 0) return(NA_real_)
+  if (is.na(f0_hz) || f0_hz <= 0) return(0)
   freq_hz <- spec[, 1] * 1000
   amp <- spec[, 2]
   total <- sum(amp)
-  if (total == 0) return(NA_real_)
+  if (total == 0) return(0)
 
   harmonic_energy <- 0
   for (h in seq_len(n_harmonics)) {

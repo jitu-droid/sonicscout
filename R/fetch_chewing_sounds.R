@@ -60,8 +60,26 @@ append_manifest <- function(manifest, row) {
   updated
 }
 
+#' Download a file if needed, and (this is the important part) ALWAYS make
+#' sure it has a manifest row -- not just when freshly downloaded. Caught a
+#' real bug from this: files already present on disk (from an earlier,
+#' possibly now-lost manifest state) were silently invisible to
+#' collect_labeled_sources() forever, because the old logic returned early
+#' on `file.exists(dest_path)` before ever registering/backfilling a
+#' manifest entry for them.
 download_one <- function(url, dest_path, label, manifest) {
-  if (file.exists(dest_path)) return(manifest)
+  if (file.exists(dest_path)) {
+    already_recorded <- dest_path %in% manifest$file
+    if (already_recorded) return(manifest)
+    message("  ", dest_path, " already on disk but missing from the manifest -- backfilling its entry.")
+    return(append_manifest(manifest, list(
+      file = dest_path, source = "USDA-ARS-soundlibrary", source_url = url,
+      label = label, license = LICENSE_NOTE,
+      md5 = unname(tools::md5sum(dest_path)), bytes = file.info(dest_path)$size,
+      downloaded_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+    )))
+  }
+
   message("  downloading ", url, " ...")
   ensure_dir(dirname(dest_path))
   ok <- tryCatch({

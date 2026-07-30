@@ -9,19 +9,26 @@
 3. **Validate.** Reject non-audio attachments and clips under 3 seconds,
    with an explicit farmer-facing message for each (never a silent failure).
 4. **Window, gate, extract features.** `R/06_predict.R` splits the incoming
-   clip into the same 2-second windows training data is built from,
-   drops any window too quiet relative to the clip's own loudest moment
-   (`gate_silent_windows()`, R/utils.R -- see below), then runs
-   `whatsappaudioR::wa_features()` on each surviving window: peak
-   frequency, spectral centroid, flatness, entropy, rolloff85,
-   dominant-frequency stability, a harmonic-energy heuristic, and 12 MFCCs.
+   clip into the same 4-second windows training data is built from (raised
+   from 2.0s in Prompt 9 -- see "Window length and temporal features"
+   below), drops any window too quiet relative to the clip's own loudest
+   moment (`gate_silent_windows()`, R/utils.R -- see below), then runs
+   `whatsappaudioR::wa_features()` on each surviving window: the original
+   spectral feature set (peak frequency, spectral centroid, flatness,
+   entropy, rolloff85, dominant-frequency stability, a harmonic-energy
+   heuristic, 12 MFCCs) plus 11 temporal features added in Prompt 9 (pulse/
+   syllable rate, inter-pulse-interval statistics, an envelope modulation
+   spectrum, temporal entropy, duty cycle, and phrase-level bout structure)
+   -- see below for why.
 5. **Classify.** `R/06_predict.R` loads `models/classifier.rds` (a random
    forest trained by `R/05_train.R`), predicts a class-probability vector
    per surviving window, and averages them into one final call: top-3
    classes, confidence scores, and an explicit `low_confidence` flag below
-   a tunable threshold (0.4 by default). If every window in the clip was
-   gated (no signal anywhere in the recording), returns `gated_silent =
-   TRUE` instead of guessing on noise.
+   a tunable threshold (0.45 -- set from a measured precision/recall/false-
+   alarm trade-off, not a round-number default; see "Operating point"
+   below). If every window in the clip was gated (no signal anywhere in
+   the recording), returns `gated_silent = TRUE` instead of guessing on
+   noise.
 6. **Log.** Every request is logged to `logs/requests.jsonl` with its audio
    hash, outcome, and (on success) top classes/confidences -- for debugging
    and for the dashboard's replay mode.
@@ -128,6 +135,100 @@ ever been provided. The FFmpeg-based local simulation used for every number
 in this document is unverified against WhatsApp's actual client-side
 encoder.
 
+## Why C. biguttulus and C. brunneus are confused, and why that's biologically expected
+
+*Chorthippus biguttulus* and *C. brunneus* are **sympatric congeners** --
+they co-occur across much of Europe -- whose species boundary is not
+maintained by anything visible or spectrally obvious; it is maintained
+**acoustically**, by the female's response to the male's song, and
+specifically by the song's **temporal** structure. Von Helversen & von
+Helversen (1997, *J Comp Physiol A* 180:373-386) established that the
+decisive cues for song recognition in *C. biguttulus* reside "in the
+temporal pattern of amplitude modulations, i.e., in a song's envelope" --
+syllables of 30-200ms with 7-40ms pauses between them, repeated at roughly
+10Hz, organised into phrases of ~20 syllables lasting roughly 2-4 seconds
+each. Gottsberger & Mayer (2007, *J Comp Physiol A* 193:703-714),
+studying F1/F2/backcross hybrids between these two exact species, found
+hybrid songs intermediate in phrase number and duration between the two
+parental species, but with species-specific SYLLABLE structure within
+phrases "largely lost in hybrids... produced, if at all, in an irregular
+and imperfect manner" -- i.e. the temporal fine structure is precisely the
+axis these two species diverge on, and precisely the axis that breaks
+down first when their acoustic communication systems are mixed.
+
+**This project's original feature set was almost entirely spectral**
+(peak frequency, spectral centroid/flatness/entropy/rolloff, a harmonic-
+energy heuristic, 12 MFCCs) -- asking a classifier to separate two species
+along the dimension the literature says they are MOST alike on, while
+never measuring the dimension that the literature says actually
+distinguishes them. This is the motivation for Prompt 9's temporal
+features, below -- not a generic "add more features and see" exercise,
+but a feature-engineering decision aimed at a specific, cited, documented
+biological mechanism.
+
+## Window length and temporal features (Prompt 9, Part 1)
+
+**Window length was checked against the literature before anything else.**
+A full song phrase in these species runs ~2-4 seconds (~20 syllables at a
+~10Hz repetition rate -- von Helversen & von Helversen 1997, above). The
+project's original 2-second training window could not reliably contain
+one full phrase. `WINDOW_SECONDS` was raised to 4.0 (HOP_SECONDS to 2.0,
+same 50% overlap ratio as before) -- checked empirically first that this
+doesn't just shrink the usable corpus: real per-species recordings have a
+median duration of 14-17s, with only 0-9% under 6 seconds, so lengthening
+the window barely changes how many windows most recordings can still
+produce. `MAX_WINDOWS_PER_SOURCE` (the per-recording cap from Prompt 8)
+was reconsidered, not silently left alone, and kept at 20 -- it still
+bounds one recording's maximum fold-share to the same order of magnitude
+as before, just over a longer absolute timeline span. See `R/utils.R` and
+`R/03_preprocess.R` for the full reasoning.
+
+**Eleven temporal features were added** to `whatsappaudioR::wa_features()`
+(`pkg/whatsappaudioR/R/wa_features.R`), all derived from the Hilbert
+amplitude envelope (`seewave::env()`) at two smoothing scales: pulse/
+syllable rate, inter-pulse-interval mean/sd/coefficient-of-variation, an
+envelope modulation spectrum (an FFT of the envelope itself, not the
+audio -- its dominant frequency and prominence), temporal entropy, duty
+cycle, and phrase-level bout structure (duration, count, duty cycle) from
+a coarser envelope scale. All return 0 (not NA) on a degenerate window,
+matching the discipline the `harmonic_energy_ratio` NA-leak fix (Session
+3) established -- an NA here would silently drop the window from training,
+which is exactly the bug class this project has repeatedly caught and
+fixed (including once more this session: `stats::sd()` of a single
+inter-pulse interval, i.e. exactly 2 detected peaks, returns NA rather
+than erroring, and was found dropping real training rows before being
+fixed the same way).
+
+**Result: *C. brunneus* mean recall rose from 34% (Prompt 8, spectral-only
+features) to 43.1% (this run, temporal features added) -- a real gain in**
+**exactly the class this was aimed at**, while *C. biguttulus* stayed
+essentially flat (63.6% -> 62.4%) and overall accuracy moved only modestly
+(66.8% -> 68.5%). This is consistent with, though not proof of, the
+biological hypothesis: the feature that targets what actually separates
+these two species helped the harder one of the pair specifically, not
+classes broadly. The two species remain frequently confused with each
+other (pooled confusion matrix: 1708 *C. brunneus* windows called *C.
+biguttulus*, 1082 the other way) -- reduced, not resolved.
+
+**Do temporal features actually rank highly in variable importance? Mostly
+no, and that's reported plainly rather than only reporting the accuracy
+win.** Of the 11 temporal features, only `envelope_mod_peak_ratio` (rank
+11 of 32 by Gini importance) and `temporal_entropy` (rank 19) place in the
+upper half; the rest rank in the bottom third, below every MFCC and every
+original spectral feature. MFCCs still dominate the top of the ranking
+outright. The honest reading: these features contribute real value in
+combination (the *C. brunneus* recall gain is real and measured) without
+any single one being individually as powerful a split as the existing
+spectral features -- plausible, since each is a compressed, low-
+dimensional summary (a rate, a ratio, a count) competing against 12 MFCCs
+that already carry substantial information. Whether temporal features
+"rank highly" was explicitly an open question this prompt asked to
+report either way -- the answer is no, individually, but yes, in effect.
+
+**Did the temporal features also make the classifier's accuracy less
+sensitive to compression, as hypothesized?** No -- see "The compression
+delta" below; report that plainly too.
+
 ## Classifier results (Deliverable D)
 
 Real numbers from **repeated grouped k-fold cross-validation** (5 folds x
@@ -138,18 +239,18 @@ fresh by `R/05_train.R`). This is the Prompt 8 replacement for a single
 train/test split -- see "The corpus-expansion, window-cap, and k-fold fix"
 below for why a single split was never defensible here.
 
-- **66.8% mean overall test accuracy (sd 5.4pp, 95% range 55.7% to
-  74.7%). 22.3% mean false-positive rate against real ambient audio (sd
-  7.1pp, range 8.3% to 35.8%).** *Cicada orni* is the strongest real class
-  (90.1% mean recall, 92.2% pooled precision). The two *Chorthippus*
-  species are frequently confused with EACH OTHER (not with ambient) --
-  unsurprising for congeneric grasshoppers with similar stridulation
-  mechanics. *C. brunneus* is notably the weakest class (34% mean recall)
-  despite having the same number of source recordings as *C. biguttulus*
-  (63.6% mean recall) -- worth investigating specifically in any follow-up
-  (see PROGRESS.md's forward-looking note), not just attributed to sample
-  size. See `docs/classifier_results.md` for the full pooled confusion
-  matrix and per-class recall-stability table.
+- **68.5% mean overall test accuracy (sd 6.5pp, 95% range 56.2% to
+  78.3%). 21.9% mean false-positive rate against real ambient audio (sd
+  8pp, range 8.1% to 39.2%).** *Cicada orni* is the strongest real class
+  (92.5% mean recall, 92.2% pooled precision). *C. brunneus* remains the
+  weakest real class (43.1% mean recall, up from 34% pre-temporal-features
+  -- see above) despite matching *C. biguttulus*'s source-recording count
+  (62.4% mean recall). See `docs/classifier_results.md` for the full
+  pooled confusion matrix and per-class recall-stability table.
+- **Baselines, so 68.5% means something:** the majority-class baseline
+  (always predicting the most common class) gets 27.1% accuracy on this
+  data (not 50% -- classes are imbalanced, ambient dominates); chance rate
+  across 8 classes is 12.5%. See `docs/operating_point.md`.
 - Chewing-sound classes are **deliberately excluded** from this classifier
   (a documented judgement call, not an oversight): the codec experiment
   already answers the chewing question at the signal level more directly,
@@ -161,22 +262,64 @@ below for why a single split was never defensible here.
 **This is a real, harder, and far more honestly-measured result than any
 earlier report from this project, and that progression is deliberate, not
 a regression.** This project's headline classifier number has gone through
-three stages: (1) an original "0% false-positive rate," measured by
+four stages: (1) an original "0% false-positive rate," measured by
 separating synthetic tone stacks from real ambient audio -- a trivial
 task, not a real one; (2) 86.9% accuracy / 8.7% FPR from a single grouped
 split on a 5-recordings-per-species corpus, later shown (Prompt 7) to be
-one lucky draw from a distribution ranging roughly 10-92%; (3) this run:
+one lucky draw from a distribution ranging roughly 10-92%; (3) 66.8%/22.3%,
 repeated grouped k-fold CV on an expanded ~45-recordings-per-species
-corpus with a cap on windows per recording. Each stage is a harder number
-than the one before it, and each is more honest -- the flattering earlier
-figures were never actually true, just measured badly. All three are kept
-in `PROGRESS.md`'s history, clearly labelled, for anyone auditing how the
-project's own numbers evolved.
+corpus with a cap on windows per recording (Prompt 8); (4) 68.5%/21.9%,
+this run, same corpus and method plus temporal features (Prompt 9). Each
+stage is a harder or more nuanced number than the one before it, and each
+is more honest -- the flattering earlier figures were never actually true,
+just measured badly. All four are kept in `PROGRESS.md`'s history, clearly
+labelled, for anyone auditing how the project's own numbers evolved.
 
 **Source-recording counts per real target class (the number that actually
 bounds every claim above):** *C. biguttulus* 45, *C. brunneus* 45, *Cicada
-orni* 45, ambient 145 (up from 5/5/5/69 before Prompt 8 -- see below for
-how much that alone changed the reliability of these numbers).
+orni* 45, ambient 145.
+
+## Operating point: what a farmer would actually experience (Prompt 9, Part 2)
+
+**21.9% mean false-positive rate is the raw-argmax number -- whatever the
+model's top-1 prediction is, at any confidence -- and it is not a fixed
+property of the model.** The model already emits a confidence score with
+every prediction (the top class's random-forest vote share); this project
+never actually tuned the `low_confidence` threshold against a measured
+trade-off before this prompt. `R/08_operating_point.R` sweeps that
+threshold using the SAME out-of-fold predictions the CV accuracy numbers
+above come from (not the final model's own training predictions, which
+would be optimistic), restricted to real audio (synthetic classes aren't
+part of the deployed scenario), and reports precision/recall/false-
+positive-rate at each threshold plus per-species detection-rate curves
+(`docs/operating_point.md`, `docs/figures/pr_curve.png`).
+
+**Chosen operating point: threshold = 0.45.** Precision 97.5%, recall
+(detection rate) 76.2%, false-positive rate 8.5%. Chosen as the LOWEST
+threshold whose false-positive rate clears a 10% deployment bar, sacrificing
+as little recall as possible while still meeting it.
+
+**The trade, stated explicitly, in deployment terms:** this is a screening
+tool a farmer acts on directly. A false alarm (an alert on real ambient
+noise) costs trust immediately and repeatedly -- enough of them and the
+farmer stops trusting alerts at all, at which point the system has no
+value regardless of its on-paper detection rate. A missed detection costs
+one skipped alert, and the system's own low-confidence reply already asks
+the farmer to resend a longer/louder recording -- a real, if imperfect,
+recovery path a false alarm has no equivalent of. This asymmetry is why
+the threshold prioritises holding false-positive rate down over
+maximising accuracy or F1, and why it is now `R/06_predict.R`'s
+`LOW_CONFIDENCE_THRESHOLD` default -- what a farmer receives now matches
+what this analysis reports, not a separate unexamined number (the
+previous default, 0.4, was never validated against any measurement at
+all).
+
+**Per-species cost of this threshold:** at 0.45, detection rate is 72.7%
+for *C. biguttulus*, 66.4% for *C. brunneus*, and 89.5% for *Cicada
+orni* -- the threshold that protects against false alarms costs *C.
+brunneus* (already the weakest class) the most detection rate
+proportionally, a real trade worth naming rather than hiding behind the
+single aggregate recall figure.
 
 ## Near-silent windows are gated, not kept and mislabelled
 
@@ -279,47 +422,67 @@ evenly across each recording's timeline) so no single long recording can
 dominate a fold, and switched evaluation from random grouped splits to
 repeated grouped k-fold CV.
 
-**Combined result: per-arm accuracy SD dropped from ~25-27 points
-(Prompt 7) to ~4.4-5.4 points -- roughly a 5x tighter spread** (mean
-accuracy: compressed 66.8%, codec-only 67.7%, full-fidelity 70.4%, each
-with a 95% range of about 10-20 points instead of ~80). **This narrowing
-is itself a result**, not just cleanup: it demonstrates the earlier
-instability was substantially a sampling artifact -- too few source
-recordings, no bound on how much one long recording could dominate a
-fold -- not an inherent property of the classification task.
+**Combined result (Prompt 8): per-arm accuracy SD dropped from ~25-27
+points (Prompt 7) to ~4.4-5.4 points -- roughly a 5x tighter spread. This
+narrowing was itself a result**, not just cleanup: it demonstrated the
+earlier instability was substantially a sampling artifact -- too few
+source recordings, no bound on how much one long recording could dominate
+a fold -- not an inherent property of the classification task.
 
-**Deltas (paired per fold-iteration, mean across 50 fold-evaluations):
-codec-only +0.9% (95% range -4.2% to +5.8%), full-fidelity +3.6% (95%
-range -4.5% to +12.7%), bandwidth component +2.7% (95% range -5.8% to
-+11.1%).**
+### Did adding temporal features narrow the delta further? (Prompt 9)
 
-**Both deltas' 95% ranges still include zero, so neither is
-distinguishable from zero at conventional confidence -- but that range is
-now roughly half as wide as before expansion**, which is a materially
-stronger statement than the pre-expansion result repeated with smaller
-numbers. Applying the same bar consistently (a range that excludes zero
-counts as "distinguishable," one that doesn't, doesn't): the **codec-only
-delta remains squarely indistinguishable from zero** -- the Opus codec in
-isolation cannot be shown to cost this classifier anything measurable.
-The **full-fidelity delta is more ambiguous**: its point estimate (+3.6%)
-is meaningfully positive and most of its range sits above zero, at least
-suggestive of a real bandwidth cost consistent with the codec experiment's
-finding that content above 8kHz is destroyed outright -- but the range's
-lower edge still touches slightly negative territory, so this corpus
-cannot yet confirm that cost at 95%. The honest read: this is the first
-run where a real bandwidth cost looks plausible rather than purely noise,
-not a confirmed finding.
+**No -- reported plainly, as instructed, rather than only reporting a
+shrink that didn't happen.** The specific hypothesis: amplitude-envelope/
+temporal structure should survive low-bitrate Opus better than fine
+spectral detail, so adding temporal features should make classifier
+accuracy LESS sensitive to compression, narrowing the delta. Measured
+result, this run (temporal features + 4s windows): codec-only delta -1.1%
+(95% range -8.8% to +6.0%), full-fidelity delta +2.8% (range -6.2% to
++13.0%), bandwidth component +3.9% (range -6.5% to +13.1%) -- compare to
+Prompt 8's pre-temporal-feature numbers just below. Both ranges WIDENED
+slightly rather than narrowing.
+
+**This comparison is not perfectly isolated, and that caveat matters as
+much as the result.** Prompt 9 changed window length (2.0s/1.0s hop ->
+4.0s/2.0s hop, to give phrase-level features enough context) AT THE SAME
+TIME as adding temporal features, so any change in compression sensitivity
+could reflect either change, not temporal features specifically. Given
+both deltas remain squarely inside noise before and after, the honest
+conclusion is: this run found no evidence that temporal features narrow
+the compression delta. A clean test of that specific hypothesis would
+need a run that changes ONLY the feature set, holding window length fixed
+-- not done here, flagged as a real gap rather than glossed over.
+
+**Deltas, both runs, for direct comparison:**
+
+| | Pre-temporal (Prompt 8) | Post-temporal (Prompt 9) |
+|---|---|---|
+| Codec-only delta | +0.9% (range -4.2% to +5.8%) | -1.1% (range -8.8% to +6.0%) |
+| Full-fidelity delta | +3.6% (range -4.5% to +12.7%) | +2.8% (range -6.2% to +13.0%) |
+| Bandwidth component | +2.7% (range -5.8% to +11.1%) | +3.9% (range -6.5% to +13.1%) |
+
+**Both deltas' 95% ranges include zero in both runs, so neither is
+distinguishable from zero at conventional confidence, in either version.**
+The codec-only delta remains squarely indistinguishable from zero
+throughout -- the Opus codec in isolation cannot be shown to cost this
+classifier anything measurable, with or without temporal features. The
+full-fidelity delta stays the more ambiguous of the two: point estimate
+positive in both runs and consistent with the codec experiment's finding
+that content above 8kHz is destroyed outright, but the range comfortably
+straddles zero in both, more so after adding temporal features than
+before.
 
 **What this does and doesn't say:** compatible with, and not
 contradicting, the codec experiment's signal-level finding that real
 Orthoptera stridulation survives the compression well -- but this corpus
-still cannot put a precision tighter than roughly +/-5 to +/-9 percentage
-points on that claim at the classifier level. What would narrow it
-further is more distinct source recordings per target species, not more
-folds/repeats of the same ~45. Does **not** extend to chewing-sound
-classes (excluded from this comparison) or to any condition not covered
-by the classifier above (field noise, distance, phone microphone
-variability, species outside the trained set).
+still cannot put a precision tighter than roughly +/-7 to +/-10 percentage
+points on that claim at the classifier level, and adding temporal features
+did not change that. What would narrow it further is more distinct source
+recordings per target species, not more folds/repeats of the same ~45, and
+not more feature engineering on the same corpus. Does **not** extend to
+chewing-sound classes (excluded from this comparison) or to any condition
+not covered by the classifier above (field noise, distance, phone
+microphone variability, species outside the trained set).
 
 ## The chewing-sound / Fall Armyworm scope decision
 
@@ -369,10 +532,10 @@ in this project.
   (up from 5, then 22/17/20, across Prompt 7 and Prompt 8's Steps 1-2).
   Repeated grouped k-fold CV (`docs/compression_delta.md`,
   `docs/classifier_results.md`) shows this expansion cut per-arm accuracy
-  SD roughly 5x (from ~26pp to ~5pp) and both compression deltas' 95%
+  SD roughly 5x (from ~26pp to ~5-6pp) and both compression deltas' 95%
   ranges roughly in half -- real, substantial progress -- but both deltas
   still cannot be distinguished from zero at a precision better than
-  roughly +/-5 to +/-9 percentage points, and per-class recall for the
+  roughly +/-7 to +/-10 percentage points, and per-class recall for the
   smallest classes (`synthetic_tone_plus_noise`, 4 source files) still
   spans its entire possible range across folds. No number in this project
   is a single-split point estimate anymore; every headline figure is a
@@ -380,11 +543,26 @@ in this project.
   recording count behind it. More source recordings per class is what
   would narrow the remaining intervals further, not more folds or repeats
   of the same corpus.
+- **The *C. brunneus* / *C. biguttulus* confusion is reduced, not
+  resolved.** Prompt 9's temporal features raised *C. brunneus* recall
+  from 34% to 43.1%, a real and biologically-motivated gain, but the two
+  species are still frequently confused with each other (see above) and
+  *C. brunneus* remains this project's weakest real class. Whatever is
+  driving the residual gap (recording quality variance, a specific
+  feature that doesn't discriminate this pair well, or genuinely harder
+  individual recordings) has not been identified -- flagged as the most
+  concrete open question in PROGRESS.md's forward-looking note, not just
+  attributed to sample size.
 - **Single-microphone, no localisation.** The system identifies *what*
   might be present, not *where* on the farm, and cannot estimate distance
   or direction.
 - **Confidence scores are random forest vote proportions**, not formally
-  calibrated (e.g. Platt-scaled) probabilities.
+  calibrated (e.g. Platt-scaled) probabilities -- but they are now used
+  for something concrete: `R/06_predict.R`'s `LOW_CONFIDENCE_THRESHOLD`
+  (0.45) was set from a measured PR-curve sweep (`docs/operating_point.md`),
+  not left as an unexamined default. Calibration would still improve how
+  literally the confidence number itself can be read, independent of the
+  threshold decision.
 - **Live Twilio round trip untested** -- the webhook is verified against a
   mock payload and the real trained model, never an actual WhatsApp Sandbox
   message (needs a Twilio account; see `docs/twilio_setup.md` and

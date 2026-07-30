@@ -160,16 +160,34 @@ a corpus this size, and for the full before/after story of fixing it.
   species). Real chewing-sound survivability is poor-to-moderate
   (0.342-0.892) and was measured under best-case contact-sensor capture,
   not realistic open-air conditions -- see `docs/codec_findings.md`.
-- **Classifier:** 66.8% mean test accuracy (sd 5.4pp, 95% range 55.7-74.7%),
-  22.3% mean false-positive rate against real ambient audio (sd 7.1pp,
-  range 8.3-35.8%), trained/evaluated on real pest audio vs. real ESC-50
+- **Classifier:** 68.5% mean test accuracy (sd 6.5pp, 95% range 56.2-78.3%),
+  21.9% mean false-positive rate against real ambient audio (sd 8pp,
+  range 8.1-39.2%), trained/evaluated on real pest audio vs. real ESC-50
   ambient audio (45 source recordings per real target species, 145
-  ambient) -- see `docs/classifier_results.md`.
-- **Compression cost:** codec-only delta +0.9% (95% range -4.2% to +5.8%,
-  indistinguishable from zero), full-fidelity delta +3.6% (95% range -4.5%
-  to +12.7%, suggestive of a real bandwidth cost but not yet confirmed at
+  ambient) -- see `docs/classifier_results.md`. Majority-class baseline is
+  27.1%, chance rate is 12.5% (8 classes) -- read the accuracy figure
+  against those, not against 50%.
+- **Temporal features (syllable rate, inter-pulse intervals, envelope
+  modulation spectrum, phrase structure) added to target the specific
+  biological mechanism separating *C. biguttulus* from *C. brunneus*** --
+  two sympatric congeners whose species boundary is maintained by song
+  TIMING, not spectral content. Result: *C. brunneus* recall rose from 34%
+  to 43.1%, while *C. biguttulus* stayed flat -- a real, targeted gain, not
+  a general improvement. See `docs/methodology.md` for the biology and the
+  citations.
+- **Operating point:** the raw 21.9% false-positive rate isn't deployable
+  for a farmer-facing alert system. A confidence threshold of 0.45 (chosen
+  from a measured precision/recall/false-alarm sweep, not a round-number
+  default) gets 97.5% precision / 76.2% recall / 8.5% false-positive rate,
+  and is now `R/06_predict.R`'s actual default -- see
+  `docs/operating_point.md`.
+- **Compression cost:** codec-only delta -1.1% (95% range -8.8% to +6.0%,
+  indistinguishable from zero), full-fidelity delta +2.8% (95% range -6.2%
+  to +13.0%, suggestive of a real bandwidth cost but not yet confirmed at
   95%) -- see `docs/compression_delta.md` for the codec-vs-bandwidth
-  decomposition.
+  decomposition. Adding temporal features did NOT narrow these deltas
+  (hypothesized that envelope structure would survive compression better
+  than spectral detail; not supported by this run).
 - None of the above has been tested against a genuine WhatsApp-exported
   voice note end to end; see `docs/methodology.md`'s limitations section.
 

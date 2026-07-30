@@ -62,6 +62,30 @@ test_that("wa_temporal_features returns 0, not NA, on pure digital silence", {
   expect_equal(f$n_phrase_bouts, 0)
 })
 
+test_that("wa_temporal_features returns 0, not NA, for ipi_sd/ipi_cv with exactly 2 peaks", {
+  # Regression test: exactly 2 detected peaks gives exactly ONE inter-pulse
+  # interval, and stats::sd() of a length-1 vector is NA (not an error) --
+  # found via 9 real training rows silently dropped for non-finite
+  # features in a real k-fold run (Prompt 9), same NA-leak bug class as
+  # the harmonic_energy_ratio confound above. "No measurable spread from a
+  # single interval" is a legitimate 0, not "unknown".
+  sr <- 16000
+  dur <- 2
+  x <- numeric(sr * dur)
+  # two isolated, well-separated pulses -- far apart, nothing else above
+  # the peak-detection threshold in between
+  pulse_len <- round(0.02 * sr)
+  x[round(0.3 * sr):(round(0.3 * sr) + pulse_len)] <- sin(2 * pi * 2000 * seq(0, 0.02, length.out = pulse_len + 1))
+  x[round(1.3 * sr):(round(1.3 * sr) + pulse_len)] <- sin(2 * pi * 2000 * seq(0, 0.02, length.out = pulse_len + 1))
+  w <- tuneR::Wave(left = as.integer(x * 32767 * 0.9), samp.rate = sr, bit = 16)
+
+  f <- whatsappaudioR:::wa_temporal_features(w)
+  expect_false(any(is.na(unlist(f))))
+  expect_equal(f$ipi_sd_s, 0)
+  expect_equal(f$ipi_cv, 0)
+  expect_gt(f$ipi_mean_s, 0)  # the one real interval should still be reported
+})
+
 test_that("wa_temporal_features detects a known pulse rate on a synthetic pulse train", {
   # A synthetic amplitude-modulated tone at a known rate is a ground-truth
   # check that the peak detector isn't wildly wrong -- not a claim that

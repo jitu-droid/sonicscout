@@ -150,10 +150,25 @@ aggregate_kfold_results <- function(results) {
   })
   names(per_class_recall_dist) <- all_classes
 
+  # Pooled per-window predictions across every fold-evaluation (Prompt 9,
+  # Part 2) -- each window appears once per repeat (n_repeats times total),
+  # tagged with which fold-iteration it came from. This is the out-of-fold
+  # prediction set the operating-point analysis (R/08_operating_point.R)
+  # sweeps a confidence threshold over -- using held-out predictions here,
+  # not the final full-corpus model's training-set predictions, avoids the
+  # optimism a threshold picked against training data would have.
+  pooled_predictions <- do.call(rbind, lapply(seq_along(results), function(i) {
+    p <- results[[i]]$predictions
+    p$repeat_i <- results[[i]]$repeat_i
+    p$fold_i <- results[[i]]$fold_i
+    p
+  }))
+
   list(all_classes = all_classes, pooled_conf_mat = pooled_conf_mat,
        pooled_prec_recall = per_class_precision_recall(pooled_conf_mat),
        accuracy_dist = accuracy_dist, fpr_dist = fpr_dist,
-       per_class_recall_dist = per_class_recall_dist)
+       per_class_recall_dist = per_class_recall_dist,
+       pooled_predictions = pooled_predictions)
 }
 
 # ---- Metrics ---------------------------------------------------------------
@@ -359,6 +374,21 @@ train_and_evaluate <- function(features_df) {
   predicted <- predict(model, complete_test[, feature_cols])
   actual <- droplevels(complete_test$label)
 
+  # Per-window predicted probability of the top class, plus the true label
+  # (Prompt 9, Part 2 -- operating-point analysis needs a confidence score
+  # per test window, not just the hard argmax accuracy numbers above).
+  prob_matrix <- predict(model, complete_test[, feature_cols], type = "prob")
+  top_confidence <- apply(prob_matrix, 1, max)
+  predictions <- data.frame(
+    source_file = complete_test$source_file,
+    label = as.character(actual),
+    data_origin = complete_test$data_origin,
+    predicted = as.character(predicted),
+    confidence = unname(top_confidence),
+    prob_ambient = if ("ambient" %in% colnames(prob_matrix)) unname(prob_matrix[, "ambient"]) else NA_real_,
+    stringsAsFactors = FALSE
+  )
+
   # Some classes may exist in test but not train (or vice versa) if a source
   # file's split happened to isolate a whole rare class -- align factor
   # levels so table() doesn't silently drop mismatched levels.
@@ -391,7 +421,8 @@ train_and_evaluate <- function(features_df) {
     n_test_raw = nrow(test_df), n_test_complete = nrow(complete_test),
     train_class_levels = sort(unique(as.character(complete_train$label))),
     test_class_levels = sort(unique(as.character(actual))),
-    source_files = unique(features_df$source_file)
+    source_files = unique(features_df$source_file),
+    predictions = predictions
   )
 }
 
@@ -427,9 +458,12 @@ train_final_model <- function(features_df, varimp_path = NULL) {
 #'   R/07_compression_delta.R can run this against the "uncompressed"
 #'   conditions without touching the default (compressed) output files.
 #' @param fold_maps Passed through to run_repeated_kfold() -- see there.
+CV_PREDICTIONS_PATH <- file.path("data", "processed", "cv_predictions.csv")
+
 main <- function(features_path = FEATURES_PATH, model_path = MODEL_PATH,
                   results_path = RESULTS_PATH, varimp_path = VARIMP_PATH,
-                  k = K_FOLDS, n_repeats = N_REPEATS, fold_maps = NULL) {
+                  k = K_FOLDS, n_repeats = N_REPEATS, fold_maps = NULL,
+                  cv_predictions_path = CV_PREDICTIONS_PATH) {
   if (!file.exists(features_path)) {
     stop(features_path, " not found -- run R/03_preprocess.R and R/04_features.R first.")
   }
@@ -449,6 +483,16 @@ main <- function(features_path = FEATURES_PATH, model_path = MODEL_PATH,
   data_origins <- table(features_df$data_origin)
 
   write_classifier_results(agg, source_counts, data_origins, k, n_repeats, results_path = results_path)
+
+  # Out-of-fold predictions, saved so R/08_operating_point.R can sweep a
+  # confidence threshold without re-running the k-fold procedure (Prompt 9,
+  # Part 2). Only written for the default (compressed) condition's own
+  # main() call -- R/07_compression_delta.R calls run_repeated_kfold()
+  # directly for its own arms and doesn't need this file.
+  if (!is.null(cv_predictions_path)) {
+    ensure_dir(dirname(cv_predictions_path))
+    utils::write.csv(agg$pooled_predictions, cv_predictions_path, row.names = FALSE)
+  }
 
   message(sprintf("Training complete. Final model at %s (trained on full corpus). CV results at %s (mean test accuracy: %s)",
                    model_path, results_path, fmt_pct(agg$accuracy_dist$mean)))

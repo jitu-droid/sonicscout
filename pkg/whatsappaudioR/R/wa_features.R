@@ -177,11 +177,20 @@ wa_temporal_features <- function(wave) {
   n_peaks <- length(peaks)
   pulse_rate_hz <- n_peaks / dur_s
 
-  if (n_peaks >= 2) {
+  if (n_peaks >= 3) {
+    # >= 3 peaks needed, not >= 2: exactly 2 peaks gives exactly one
+    # inter-pulse interval, and stats::sd() of a length-1 vector is NA
+    # (not an error) -- found as a real bug via 9 non-finite feature rows
+    # silently dropped from a training run (Prompt 9). "No measurable
+    # spread from a single interval" is a legitimate 0, not an unknown.
     ipi <- diff(sort(peaks) / env_sr)
     ipi_mean_s <- mean(ipi)
     ipi_sd_s <- stats::sd(ipi)
     ipi_cv <- if (ipi_mean_s > 0) ipi_sd_s / ipi_mean_s else 0
+  } else if (n_peaks == 2) {
+    ipi_mean_s <- diff(sort(peaks) / env_sr)
+    ipi_sd_s <- 0
+    ipi_cv <- 0
   } else {
     ipi_mean_s <- 0; ipi_sd_s <- 0; ipi_cv <- 0
   }

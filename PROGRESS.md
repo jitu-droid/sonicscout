@@ -927,3 +927,68 @@ delta is ~5x more stable than that (SD ~4.5-6.4pp vs. ~25-27pp) since the
 same long-recording-luck affects every arm identically per seed and
 cancels out of the difference -- both deltas are indistinguishable from
 zero at this sample size.
+
+---
+
+## Session 5 — Prompt 8 (fix the variance at its source)
+
+Prompt 8's diagnosis of Prompt 7's finding: the ~10-92% per-arm accuracy
+swing wasn't a property of the task, it was a property of a bug --
+`R/03_preprocess.R`'s `MAX_REAL_PER_SUBCATEGORY` cap (=5) was applied
+uniformly to every class, silently discarding all but 5 of the 22/17/20
+real recordings already on disk for the 3 target species. With a class's
+entire real corpus at 5 files, a grouped split's test set is often ONE
+recording, so accuracy tracks which recording happened to land in test.
+
+### Step 1: remove the cap, measure the effect in isolation
+
+Fixed `R/03_preprocess.R`'s `collect_labeled_sources()`: real pest species
+now get NO cap (every downloaded, valid recording enters the pipeline);
+ESC-50 ambient keeps a per-subcategory cap, raised from 5 to
+`MAX_AMBIENT_PER_SUBCATEGORY = 10` so the ambient/negative class stays in
+the same ballpark as a pest corpus that's no longer artificially small
+(documented balance rule: not exact numeric parity, just not letting
+ambient become either a swamping majority or a token minority class).
+
+**Isolated before/after comparison** (Prompt 7's exact evaluation
+methodology -- random grouped split, 50 seeds -- re-run against the
+cap-removed corpus, so this measures the cap fix ALONE, not conflated with
+Step 3's later window-cap/k-fold changes):
+
+| | Source files | Compressed accuracy: mean (sd, range) |
+|---|---:|---|
+| **Before** (Prompt 7, capped at 5/species) | 109 | 56.8% (sd 25.8pp, range 14.9%-91.6%) |
+| **After** (Step 1, cap removed) | 223 | 54.8% (sd 15.0pp, range 33.6%-83.7%) |
+
+**SD dropped ~42% (25.8pp -> 15.0pp) from this one fix alone.** This is a
+real, substantial reduction, and it's exactly the methodological result
+Prompt 8 predicted: the instability was, in large part, a sampling
+artifact (an unnecessary cap discarding 80%+ of already-downloaded real
+data), not an inherent property of the classification task. It's a
+**partial**, not complete, fix -- the range is still wide (33.6%-83.7%)
+because the residual instability driver Step 1 doesn't touch is still
+present: `windows_per_source` for this run had max=411 (one recording,
+uncapped, contributing far more windows than any other), so a single very
+long recording can still dominate whichever fold it lands in. That's
+exactly what Step 3's window-per-recording cap addresses next -- the two
+fixes are complementary, and reporting the cap-removal's effect in
+isolation first (rather than only reporting the fully-fixed end state)
+makes that complementarity demonstrable rather than asserted.
+
+**A second, unrelated bug found and fixed while working on this:**
+`fetch_esc50()` (`R/01_download_data.R`) unconditionally re-appended every
+matching ESC-50 clip to `data/raw/manifest.csv` on every run, without
+checking whether that file already had a manifest row (unlike
+`download_tracked()`, which does check). Across this project's multiple
+sessions, the same ~561 ESC-50 files had been re-registered 5 times each --
+2801 total rows for 561 unique files, inflating the manifest's tracked
+"total bytes downloaded" figure by roughly 1GB of phantom re-counted
+bytes (nothing was actually re-downloaded; the same on-disk file's size
+was just added to the running total again). This silently and falsely
+tripped the project's 2GB download cap the moment Step 2's expansion tried
+to fetch new files, reporting "Download cap (2GB) reached" on every single
+new candidate despite the REAL unique-file total being ~1.46GB, comfortably
+under budget. Fixed by deduping the existing manifest (2876 rows -> 636
+unique-file rows, 2448MB -> 1460MB tracked) and adding the same
+already-registered check to `fetch_esc50()` that `download_tracked()`
+already had.

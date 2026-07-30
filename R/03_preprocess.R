@@ -41,6 +41,17 @@ WINDOWS_MANIFEST   <- file.path(PROCESSED_DIR, "windows_manifest.csv")
 # voice note identically to how training data is windowed/gated here --
 # "same window population" between train and serve.
 
+# Cap on windows contributed by any one source recording (Prompt 8, Step 3)
+# -- see the comment at its use in process_one_file() for why. 20 windows
+# at WINDOW_SECONDS=2.0/HOP_SECONDS=1.0 spans ~21s of a recording's timeline
+# (with 50% overlap) -- enough to still capture real within-call variation
+# for a short recording, while bounding a multi-minute recording's maximum
+# possible share of any one fold to the same order of magnitude as every
+# other recording, not two orders of magnitude more. Training-side only:
+# not applied at inference (R/06_predict.R), where a real incoming voice
+# note is expected to be a single short (10-30s) clip in the first place.
+MAX_WINDOWS_PER_SOURCE <- 20
+
 # Synthetic classes that exist purely to ground-truth-check the codec
 # simulation (Deliverable A), not to represent a pest/ambient class -- these
 # are excluded from the classifier's training set. See docs/methodology.md.
@@ -56,13 +67,31 @@ SYNTHETIC_CODEC_ONLY_LABELS <- c("synthetic_above_nyquist_control")
 AUDIO_EXTENSIONS <- c("wav", "mp3", "ogg", "opus", "m4a")
 
 # Cap real ESC-50 clips per subcategory: ESC-50 has 40 clips/category, and
-# with 14 ambient categories that's 560 real ambient windows-worth against
-# a synthetic corpus of 5 source files per pest class -- wildly imbalanced
-# and slow to process for a hackathon-scale demo. Capped near the synthetic
-# per-class count instead of forcing exact balance (real data scarcity for
-# pest classes is real and should be visible, not hidden). Sampled (fixed
-# seed), not first-N, to avoid any accidental ordering bias.
-MAX_REAL_PER_SUBCATEGORY <- 5
+# with 14 ambient categories that's 560 real ambient windows-worth. Capped
+# so the ambient/negative class stays roughly matched in scale to the real
+# pest corpus rather than swamping it, not because ESC-50 is scarce.
+# Sampled (fixed seed), not first-N, to avoid any accidental ordering bias.
+#
+# Real PEST species get NO cap (Prompt 8, Step 1) -- every downloaded,
+# valid recording enters the pipeline. The previous version of this
+# constant (MAX_REAL_PER_SUBCATEGORY = 5, applied uniformly to every
+# class including real pest species) was silently discarding the vast
+# majority of already-downloaded InsectSet459 audio: 22/17/20 files on
+# disk for the 3 real species, but only 5 of each were ever used. Prompt
+# 7's 50-seed analysis found this classifier's accuracy swinging ~10-92%
+# seed to seed; the root cause was traced to this cap -- with only 5
+# source files per class and a grouped split, a class's entire test set
+# is often ONE recording, so accuracy tracks which recording happened to
+# land in test, not anything the model is good or bad at. Fixed at the
+# source (use the whole corpus) rather than by re-splitting harder. See
+# docs/methodology.md and PROGRESS.md for the before/after
+# seed-distribution comparison this produced.
+MAX_AMBIENT_PER_SUBCATEGORY <- 10  # up from 5 -- now that pest species use
+# their full corpus (dozens of files each once Prompt 8 Step 2's expanded
+# download lands) rather than 5 files each, 5-per-ambient-category would
+# make ambient a small minority class; 10 (14 categories = up to 140
+# ambient source files) keeps it in the same ballpark as a ~40-50-file-
+# per-species pest corpus without needing exact numeric parity.
 
 #' Collect every (path, label, data_origin) row we have labelled audio for.
 #' `label` for ESC-50 ambient categories is coarsened to "ambient" for the
@@ -93,17 +122,18 @@ collect_labeled_sources <- function() {
 
     raw_manifest$is_ambient <- raw_manifest$source == "ESC-50"
     # Cap per LABEL (species), not per source -- grouping by `source` would
-    # lump all 3 InsectSet459 species into one shared cap of
-    # MAX_REAL_PER_SUBCATEGORY total (a real bug found while retraining:
-    # it silently capped 3 species combined at 5 files instead of 5 each,
-    # wasting most of the deepened real corpus). ESC-50 still groups by its
-    # finer ambient category (`label`), same as before.
+    # lump all InsectSet459 species into one shared cap (a real bug found
+    # while retraining in Session 3: it silently capped 3 species combined
+    # at 5 files instead of 5 each). ESC-50 groups by its finer ambient
+    # category (`label`), same as before. Real pest species are uncapped
+    # (Inf) as of Prompt 8 -- see MAX_AMBIENT_PER_SUBCATEGORY above.
     raw_manifest$subcat_key <- raw_manifest$label
     set.seed(20260729)
     for (key in unique(raw_manifest$subcat_key)) {
       subset_idx <- which(raw_manifest$subcat_key == key)
-      keep_idx <- if (length(subset_idx) > MAX_REAL_PER_SUBCATEGORY) {
-        sample(subset_idx, MAX_REAL_PER_SUBCATEGORY)
+      cap <- if (raw_manifest$is_ambient[subset_idx[1]]) MAX_AMBIENT_PER_SUBCATEGORY else Inf
+      keep_idx <- if (length(subset_idx) > cap) {
+        sample(subset_idx, cap)
       } else {
         subset_idx
       }
@@ -232,14 +262,30 @@ process_one_file <- function(path, label, subcategory, data_origin,
     keep <- gate_silent_windows(windows)
     n_before <- length(windows)
     n_after <- sum(keep)
+    kept_original_indices <- which(keep)
     windows <- windows[keep]
+
+    # Cap windows contributed by any ONE source recording (Prompt 8, Step 3).
+    # Recording durations vary by two orders of magnitude in this corpus (a
+    # few seconds to several minutes); left uncapped, one long recording can
+    # contribute hundreds of windows and dominate whichever grouped-split
+    # fold it lands in -- this is what made Prompt 7's per-arm accuracy
+    # swing ~10-92% seed to seed even after fixing the per-species file cap
+    # (Step 1). Subsampled EVENLY ACROSS the recording's timeline (not the
+    # first MAX_WINDOWS_PER_SOURCE, which would bias every capped recording
+    # toward its opening seconds) so the capped set still represents the
+    # whole recording, not just its start.
+    if (length(windows) > MAX_WINDOWS_PER_SOURCE) {
+      pick <- unique(round(seq(1, length(windows), length.out = MAX_WINDOWS_PER_SOURCE)))
+      windows <- windows[pick]
+      kept_original_indices <- kept_original_indices[pick]
+    }
 
     stem <- tools::file_path_sans_ext(basename(path))
     out_dir <- file.path(processed_dir, label)
     ensure_dir(out_dir)
 
     manifest_rows <- vector("list", length(windows))
-    kept_original_indices <- which(keep)
     for (i in seq_along(windows)) {
       out_path <- file.path(out_dir, sprintf("%s__win%02d.wav", stem, kept_original_indices[i]))
       out_wave <- tuneR::Wave(left = as.integer(windows[[i]]), samp.rate = degraded@samp.rate, bit = 16)
@@ -295,8 +341,21 @@ main <- function(mode = c("compressed", "codec_only", "full_fidelity"),
   message("Energy gate (", ENERGY_GATE_DB, "dB relative to each recording's own peak window): ",
           n_before_gate - n_after_gate, " of ", n_before_gate, " windows dropped as near-silent.")
 
+  # Windows-per-recording distribution (Prompt 8, Step 3 asks this be
+  # reported explicitly -- it's the direct evidence for whether the cap
+  # above is doing anything).
+  per_source_counts <- table(all_windows$source_file)
+  if (length(per_source_counts) > 0) {
+    q <- stats::quantile(as.integer(per_source_counts), probs = c(0, .25, .5, .75, 1))
+    message(sprintf(
+      "Windows per source recording (post-cap, n=%d recordings): min=%d, p25=%.0f, median=%.0f, p75=%.0f, max=%d.",
+      length(per_source_counts), q[1], q[2], q[3], q[4], q[5]
+    ))
+  }
+
   attr(all_windows, "n_windows_before_gate") <- n_before_gate
   attr(all_windows, "n_windows_after_gate") <- n_after_gate
+  attr(all_windows, "windows_per_source") <- per_source_counts
   invisible(all_windows)
 }
 

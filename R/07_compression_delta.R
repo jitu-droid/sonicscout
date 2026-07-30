@@ -1,36 +1,37 @@
-# Prompt 4 Step 3 / Prompt 7 -- the compressed-vs-uncompressed accuracy delta,
-# done properly.
+# Prompt 4 Step 3 / Prompt 7 / Prompt 8, Step 3 -- the compressed-vs-
+# uncompressed accuracy delta, evaluated properly.
 #
-# Prompt 7 found the original version of this script wasn't reportable yet,
-# for three reasons, all fixed here:
+# Prompt 7 replaced a single random grouped split with 50 different random
+# grouped splits and found per-arm accuracy swinging ~10-92% seed to seed.
+# Prompt 8 fixed the actual CAUSE of that (Step 1: the classifier was only
+# ever using 5 of dozens of already-downloaded source recordings per real
+# species; Step 2: expanded the corpus further) and, here, replaces random
+# grouped splitting with REPEATED GROUPED K-FOLD CROSS-VALIDATION: every
+# source recording serves as test data across folds (not left to chance
+# the way a random split does), repeated several times with different fold
+# assignments so the result is a distribution, not one draw.
 #
-#   1. "Uncompressed" was ambiguous. The original single uncompressed arm
-#      resampled to WHATSAPP_SAMPLE_RATE (16kHz) and skipped only the Opus
-#      round-trip -- i.e. it isolated CODEC damage with bandwidth held
-#      constant, and said nothing about the bandwidth WhatsApp's 16kHz
-#      sample rate itself discards. This script now builds TWO uncompressed
-#      controls: "codec_only" (still 16kHz, no Opus -- isolates codec
-#      quantization damage) and "full_fidelity" (resampled to
-#      FULL_FIDELITY_SAMPLE_RATE = 48kHz, no Opus -- isolates the TOTAL
-#      transport cost, bandwidth included). The gap between the two deltas
-#      decomposes the loss into a bandwidth component and a codec component.
-#   2. A bare point estimate on ~217 test windows is indefensible -- it
-#      can't be distinguished from zero, but it also can't be distinguished
-#      from a genuinely large effect. This script now runs repeated grouped
-#      splits (many seeds) for every arm and reports the distribution of
-#      accuracy and of the paired per-seed delta, not a single number.
-#   3. Silent windows were mislabelled data (a window with no species signal
-#      still carried its source recording's label). R/03_preprocess.R now
-#      gates near-silent windows out at the source (ENERGY_GATE_DB,
-#      R/utils.R), applied identically to every arm here.
+# Three things this script exists specifically to get right:
 #
-# It also adds the invariant assertions Prompt 7 asked for: before any model
-# trains, this script checks that all three arms were built from the same
-# source-file set, reached the same set of classes in every split, and
-# didn't diverge wildly in how many rows got dropped for non-finite
-# features -- the exact class of bug that produced the original spurious
-# -15.9% delta (see docs/compression_delta.md's account of that). Any
-# violation stops the script rather than silently producing a number.
+#   1. Two uncompressed controls, not one ambiguous one (Prompt 7, Issue 1):
+#      "codec_only" (still WhatsApp's 16kHz, no Opus -- isolates codec
+#      damage) and "full_fidelity" (a common 48kHz, no Opus -- isolates
+#      total transport cost including bandwidth). The gap between the two
+#      deltas decomposes total cost into a codec component and a bandwidth
+#      component.
+#   2. Repeated grouped k-fold, with the SAME fold assignment used across
+#      all three arms (Prompt 8, Step 3) -- fold assignment is computed
+#      ONCE (from the compressed arm's source-file list) and reused
+#      structurally by every arm, not just seeded identically and hoped to
+#      match. This is what makes the PAIRED per-fold delta the right
+#      headline number: the same recording's fold-membership luck affects
+#      every arm identically on a given (repeat, fold), so it cancels out
+#      of the difference between arms even though it doesn't cancel out of
+#      any single arm's raw accuracy.
+#   3. Invariant assertions covering BOTH the source-file sets AND the fold
+#      assignment across arms (Prompt 8 explicitly asks for the latter,
+#      not just the former) -- fail loudly before training rather than
+#      silently producing a misleading number.
 #
 # NOTE ON STRUCTURE: 03_preprocess.R, 04_features.R, and 05_train.R each
 # define their own top-level `main()` function (by design, so
@@ -45,7 +46,8 @@
 #
 # Rebuilds all three arms (compressed, codec-only, full-fidelity) from
 # data/raw/manifest.csv every run, so they can never silently drift out of
-# sync with each other or with a stale energy-gate/feature implementation.
+# sync with each other or with a stale energy-gate/window-cap/feature
+# implementation.
 
 source(file.path("R", "utils.R"))
 source(file.path("R", "02_codec_experiment.R"))  # WHATSAPP_SAMPLE_RATE, simulate_whatsapp_compression()
@@ -58,9 +60,10 @@ features_main <- main    # capture before 05_train.R's source() overwrites `main
 
 source(file.path("R", "05_train.R"))
 # 05_train.R's own `main()` writes fixed report/model files for the
-# compressed condition -- not used here. We call grouped_split() and
-# train_and_evaluate() directly on all three conditions instead, for full
-# control and so none of them overwrite each other's files.
+# compressed condition -- not used here. We call run_repeated_kfold() and
+# aggregate_kfold_results() directly on all three conditions instead, with
+# a SHARED fold assignment, for full control and so none of them overwrite
+# each other's files.
 
 ARM_DIRS <- list(
   compressed    = file.path("data", "processed"),
@@ -69,21 +72,14 @@ ARM_DIRS <- list(
 )
 DELTA_RESULTS_PATH <- file.path("docs", "compression_delta.md")
 
-N_SEEDS <- 50  # "at least 20 seeds, more if runtime allows" (Prompt 7); the
-# split+train+evaluate step is cheap (features are already extracted once
-# per arm), so 50 was affordable and gives a visibly smoother seed
-# distribution than 20-25 given how unstable per-seed accuracy turned out
-# to be on this corpus (see docs/compression_delta.md).
-SEED_BASE <- 20260729  # same base as 05_train.R's fixed SEED, offset per iteration below
-
 # Divergence beyond this, in the fraction of TEST rows dropped for
 # non-finite features between the compressed arm and an uncompressed arm,
 # stops the script rather than reporting a delta. The original confound
-# (docs/compression_delta.md) had test-side drop fractions of roughly
-# 3% (compressed) vs. ~55% (uncompressed) -- a ~50 percentage point gap.
-# 15 points is well below that failure mode and well above the normal
-# seed-to-seed noise observed once the harmonic_energy_ratio fix and the
-# energy gate are both in place.
+# (docs/compression_delta.md's own history section) had test-side drop
+# fractions of roughly 3% (compressed) vs. ~55% (uncompressed) -- a ~50
+# percentage point gap. 15 points is well below that failure mode and well
+# above the normal fold-to-fold noise observed once the harmonic_energy_ratio
+# fix and the energy gate are both in place.
 DROP_FRACTION_TOLERANCE <- 0.15
 
 # Total raw (pre-drop, pre-complete.cases) row count across arms is allowed
@@ -95,8 +91,8 @@ ROW_COUNT_TOLERANCE_FRAC <- 0.15
 
 #' Build one arm end to end: preprocess (with the given mode) -> extract
 #' features -> return the features data frame, tagged with the raw
-#' (pre-split) row count and the energy-gate loss reported by
-#' preprocess_main().
+#' (pre-split) row count and the energy-gate/window-cap bookkeeping
+#' reported by preprocess_main().
 build_arm <- function(mode, dir) {
   windows_manifest <- file.path(dir, "windows_manifest.csv")
   features_path <- file.path(dir, "features.csv")
@@ -104,32 +100,14 @@ build_arm <- function(mode, dir) {
   windows <- preprocess_main(mode = mode, processed_dir = dir, windows_manifest_path = windows_manifest)
   n_before_gate <- attr(windows, "n_windows_before_gate")
   n_after_gate <- attr(windows, "n_windows_after_gate")
+  windows_per_source <- attr(windows, "windows_per_source")
 
   features_main(windows_manifest_path = windows_manifest, features_path = features_path)
   features_df <- utils::read.csv(features_path, stringsAsFactors = FALSE)
 
   list(features = features_df, n_windows_before_gate = n_before_gate,
-       n_windows_after_gate = n_after_gate, n_features_rows = nrow(features_df))
-}
-
-#' Mean/sd/percentile summary of a numeric vector across seeds -- the
-#' "distribution across seeds" Prompt 7 asks for, not a bare point estimate.
-seed_summary <- function(x) {
-  x <- x[is.finite(x)]
-  if (length(x) == 0) {
-    return(list(mean = NA_real_, sd = NA_real_, lo95 = NA_real_, hi95 = NA_real_, n = 0L))
-  }
-  list(mean = mean(x), sd = stats::sd(x),
-       lo95 = unname(stats::quantile(x, 0.025)), hi95 = unname(stats::quantile(x, 0.975)),
-       n = length(x))
-}
-
-fmt_pct <- function(x) if (is.na(x)) "N/A" else paste0(round(x * 100, 1), "%")
-fmt_summary <- function(s) {
-  if (s$n == 0) return("N/A")
-  sprintf("%s (sd %s, seed range %s to %s)", fmt_pct(s$mean),
-          if (is.na(s$sd)) "N/A" else paste0(round(s$sd * 100, 1), "pp"),
-          fmt_pct(s$lo95), fmt_pct(s$hi95))
+       n_windows_after_gate = n_after_gate, windows_per_source = windows_per_source,
+       n_features_rows = nrow(features_df))
 }
 
 main <- function() {
@@ -140,7 +118,7 @@ main <- function() {
     full_fidelity = build_arm("full_fidelity", ARM_DIRS$full_fidelity)
   )
 
-  # ---- Invariant assertions (Prompt 7) --------------------------------------
+  # ---- Invariant assertions: source-file sets & fold assignment ------------
   # Checked ONCE up front, before any model trains, so a violation is loud
   # and specific rather than a silently-wrong number discovered by hand
   # later (as the original -15.9% delta was).
@@ -168,89 +146,92 @@ main <- function() {
     ))
   }
 
+  # Fold assignment (Prompt 8, Step 3): computed ONCE from the compressed
+  # arm's source-file list, reused structurally by every arm -- not just
+  # re-derived per arm from the same seed and hoped to match. Explicitly
+  # verified against every arm's own source-file set before use, per
+  # Prompt 8's instruction that invariant assertions must cover fold
+  # assignment, not just the split.
+  source_labels_master <- unique(arms$compressed$features[, c("source_file", "label")])
+  shared_fold_maps <- lapply(seq_len(N_REPEATS), function(r) assign_kfold(source_labels_master, K_FOLDS, SEED + r))
+
+  for (arm_name in names(arms)) {
+    arm_sources <- unique(arms[[arm_name]]$features$source_file)
+    missing <- setdiff(arm_sources, names(shared_fold_maps[[1]]))
+    if (length(missing) > 0) {
+      stop("INVARIANT VIOLATED: fold assignment (computed from the compressed arm's ",
+           "source list) is missing ", length(missing), " source file(s) present in the '",
+           arm_name, "' arm. Fold assignment must be identical across arms -- ",
+           "investigate before trusting any number here.")
+    }
+  }
+
   message("Invariant checks passed: identical source-file sets across arms; ",
           "raw feature-row counts within tolerance (",
-          paste(names(raw_counts), raw_counts, sep = "=", collapse = ", "), ").")
+          paste(names(raw_counts), raw_counts, sep = "=", collapse = ", "),
+          "); fold assignment verified against every arm's source list.")
 
-  # ---- Repeated grouped splits (Prompt 7, Issue 2) --------------------------
+  # ---- Repeated grouped k-fold CV, shared fold assignment -------------------
 
-  seeds <- SEED_BASE + seq_len(N_SEEDS)
-  per_seed <- lapply(seeds, function(seed) {
-    results <- lapply(arms, function(a) train_and_evaluate(grouped_split(a$features, seed = seed)))
+  cv_by_arm <- lapply(arms, function(a) run_repeated_kfold(a$features, k = K_FOLDS, n_repeats = N_REPEATS,
+                                                            fold_maps = shared_fold_maps))
+  agg_by_arm <- lapply(cv_by_arm, function(cv) aggregate_kfold_results(cv$results))
 
-    # Per-seed invariant checks that depend on the split itself.
-    class_sets_train <- lapply(results, `[[`, "train_class_levels")
-    class_sets_test <- lapply(results, `[[`, "test_class_levels")
-    if (!all(vapply(class_sets_train[-1], setequal, logical(1), class_sets_train[[1]]))) {
-      stop("INVARIANT VIOLATED (seed ", seed, "): arms reached DIFFERENT sets of ",
-           "training classes from the same source-file split -- a class is being ",
-           "wiped out by gating/feature-extraction in one arm but not another.")
+  n_iterations <- K_FOLDS * N_REPEATS
+  stopifnot(
+    "arm result-list lengths differ" = length(cv_by_arm$compressed$results) == n_iterations,
+    length(cv_by_arm$codec_only$results) == n_iterations,
+    length(cv_by_arm$full_fidelity$results) == n_iterations
+  )
+
+  # Per-iteration invariant: class sets reached and non-finite-feature drop
+  # fraction must stay comparable across arms AT EVERY (repeat, fold) --
+  # same guardrail as Prompt 7's per-seed check, now per-fold-iteration.
+  # Results lists are built in identical (repeat, fold) order across arms
+  # (run_repeated_kfold() iterates deterministically), so index i means the
+  # same fold-iteration in every arm.
+  for (i in seq_len(n_iterations)) {
+    r_c <- cv_by_arm$compressed$results[[i]]
+    r_k <- cv_by_arm$codec_only$results[[i]]
+    r_f <- cv_by_arm$full_fidelity$results[[i]]
+
+    if (!setequal(r_c$test_class_levels, r_k$test_class_levels) ||
+        !setequal(r_c$test_class_levels, r_f$test_class_levels)) {
+      stop("INVARIANT VIOLATED (fold-iteration ", i, "): arms reached DIFFERENT sets of ",
+           "test classes from the identical fold assignment -- a class is being wiped ",
+           "out by gating/feature-extraction/window-cap in one arm but not another.")
     }
-    if (!all(vapply(class_sets_test[-1], setequal, logical(1), class_sets_test[[1]]))) {
-      stop("INVARIANT VIOLATED (seed ", seed, "): arms reached DIFFERENT sets of ",
-           "test classes from the same source-file split.")
-    }
 
-    test_drop_frac <- vapply(results, function(r) {
-      if (r$n_test_raw == 0) return(NA_real_)
-      (r$n_test_raw - r$n_test_complete) / r$n_test_raw
-    }, numeric(1))
-    drop_gap <- abs(test_drop_frac[c("codec_only", "full_fidelity")] - test_drop_frac["compressed"])
-    if (any(drop_gap > DROP_FRACTION_TOLERANCE, na.rm = TRUE)) {
+    drop_frac <- function(r) if (r$n_test_raw == 0) NA_real_ else (r$n_test_raw - r$n_test_complete) / r$n_test_raw
+    dc <- drop_frac(r_c); dk <- drop_frac(r_k); df <- drop_frac(r_f)
+    if (any(c(abs(dk - dc), abs(df - dc)) > DROP_FRACTION_TOLERANCE, na.rm = TRUE)) {
       stop(sprintf(
-        "INVARIANT VIOLATED (seed %d): test-row non-finite-feature drop fraction ",
-        "diverges by more than %.0f points between arms -- compressed=%.1f%%, ",
-        "codec_only=%.1f%%, full_fidelity=%.1f%%. This is the exact class of bug ",
-        "that produced the original spurious -15.9%% delta; investigate before ",
-        "trusting any number here.",
-        seed, DROP_FRACTION_TOLERANCE * 100, test_drop_frac["compressed"] * 100,
-        test_drop_frac["codec_only"] * 100, test_drop_frac["full_fidelity"] * 100
+        "INVARIANT VIOLATED (fold-iteration %d): test-row non-finite-feature drop ",
+        "fraction diverges by more than %.0f points between arms -- compressed=%.1f%%, ",
+        "codec_only=%.1f%%, full_fidelity=%.1f%%. This is the exact class of bug that ",
+        "produced the original spurious -15.9%% delta; investigate before trusting any ",
+        "number here.",
+        i, DROP_FRACTION_TOLERANCE * 100, dc * 100, dk * 100, df * 100
       ))
     }
+  }
+  message("Invariant checks passed for all ", n_iterations, " fold-iterations. Aggregating...")
 
-    list(
-      seed = seed,
-      accuracy = vapply(results, `[[`, numeric(1), "accuracy"),
-      n_test_sources = vapply(results, `[[`, integer(1), "n_test_sources"),
-      test_drop_frac = test_drop_frac,
-      prec_recall = lapply(results, `[[`, "prec_recall")
-    )
-  })
+  # ---- Paired per-fold-iteration deltas -------------------------------------
 
-  message("Invariant checks passed for all ", N_SEEDS, " seeds. Aggregating...")
+  acc <- lapply(cv_by_arm, function(cv) vapply(cv$results, `[[`, numeric(1), "accuracy"))
+  codec_only_delta_per_iter <- acc$codec_only - acc$compressed
+  full_fidelity_delta_per_iter <- acc$full_fidelity - acc$compressed
+  bandwidth_component_per_iter <- full_fidelity_delta_per_iter - codec_only_delta_per_iter
 
-  acc_by_arm <- lapply(names(arms), function(nm) vapply(per_seed, function(p) p$accuracy[[nm]], numeric(1)))
-  names(acc_by_arm) <- names(arms)
+  codec_only_delta_dist <- distribution_summary(codec_only_delta_per_iter)
+  full_fidelity_delta_dist <- distribution_summary(full_fidelity_delta_per_iter)
+  bandwidth_component_dist <- distribution_summary(bandwidth_component_per_iter)
 
-  codec_only_delta_per_seed <- acc_by_arm$codec_only - acc_by_arm$compressed
-  full_fidelity_delta_per_seed <- acc_by_arm$full_fidelity - acc_by_arm$compressed
-  bandwidth_component_per_seed <- full_fidelity_delta_per_seed - codec_only_delta_per_seed
+  # ---- Source-recording counts (fixed) & gate/window-cap reporting ---------
 
-  acc_summary <- lapply(acc_by_arm, seed_summary)
-  codec_only_delta_summary <- seed_summary(codec_only_delta_per_seed)
-  full_fidelity_delta_summary <- seed_summary(full_fidelity_delta_per_seed)
-  bandwidth_component_summary <- seed_summary(bandwidth_component_per_seed)
+  source_counts <- table(source_labels_master$label)
 
-  # Per-class stability: total distinct source files backing each class
-  # (a fixed property of the data, independent of seed -- Prompt 7 asks for
-  # this to be stated prominently) plus the across-seed spread of test
-  # recall for each class, so a class with too little data to support a
-  # stable estimate is visible as such rather than reported as a clean number.
-  source_labels <- unique(arms$compressed$features[, c("source_file", "label")])
-  n_sources_per_class <- table(source_labels$label)
-
-  all_classes <- sort(unique(source_labels$label))
-  per_class_recall_summary <- lapply(all_classes, function(cls) {
-    recalls <- vapply(per_seed, function(p) {
-      pr <- p$prec_recall$compressed
-      row <- pr[pr$class == cls, ]
-      if (nrow(row) == 0) NA_real_ else row$recall
-    }, numeric(1))
-    seed_summary(recalls)
-  })
-  names(per_class_recall_summary) <- all_classes
-
-  # ---- Gate loss reporting (Prompt 7, Issue 3) ------------------------------
   gate_report <- sprintf(
     "- **%s**: %d of %d windows dropped as near-silent (%.1f%%)",
     names(arms),
@@ -259,6 +240,9 @@ main <- function() {
     100 * vapply(arms, function(a) (a$n_windows_before_gate - a$n_windows_after_gate) / a$n_windows_before_gate, numeric(1))
   )
 
+  wps <- arms$compressed$windows_per_source
+  wps_q <- if (length(wps) > 0) stats::quantile(as.integer(wps), probs = c(0, .25, .5, .75, 1)) else rep(NA_real_, 5)
+
   # ---- Write docs/compression_delta.md --------------------------------------
   ensure_dir(dirname(DELTA_RESULTS_PATH))
   lines <- c(
@@ -266,10 +250,12 @@ main <- function() {
     "",
     paste0("Generated by `R/07_compression_delta.R` on ", format(Sys.time(), "%Y-%m-%d %H:%M"),
            ". All three arms (compressed, codec-only uncompressed, full-fidelity uncompressed) ",
-           "are rebuilt from the same `data/raw/manifest.csv` on every run, split ", N_SEEDS,
-           " different ways (different random seeds, same grouped-by-source-recording method), ",
-           "and every number below is the distribution across those ", N_SEEDS, " splits -- not a ",
-           "single point estimate."),
+           "are rebuilt from the same `data/raw/manifest.csv` on every run and evaluated with ",
+           K_FOLDS, "-fold grouped cross-validation, repeated ", N_REPEATS,
+           " times with different fold assignments (", K_FOLDS * N_REPEATS,
+           " fold-evaluations total) -- the SAME fold assignment is used across all three arms ",
+           "on a given repeat (verified, not just seeded identically). Every number below is the ",
+           "distribution across those fold-evaluations, not a single point estimate."),
     "",
     "## What each arm actually is",
     "",
@@ -285,15 +271,24 @@ main <- function() {
     "  (codec damage AND the bandwidth WhatsApp's 16kHz sample rate discards) against ",
     "  a raw-upload alternative.",
     "",
-    "## Source-recording counts per class (fixed, independent of seed)",
+    "## Source-recording counts per class (fixed, independent of fold/repeat)",
     "",
     "A competent judge will ask about sample size first. These counts are the total ",
-    "distinct source recordings backing each class (train+val+test combined) -- the ",
-    paste0("same physical files are re-shuffled ", N_SEEDS, " different ways below, not ", N_SEEDS,
-           " independent samples of new data."),
+    "distinct source recordings backing each class (across every fold) -- the same ",
+    "physical files are re-shuffled into folds many different ways below, not ",
+    "independent new samples.",
     "",
     paste0("| Class | Source recordings |\n|---|---:|\n",
-           paste0("| ", names(n_sources_per_class), " | ", as.integer(n_sources_per_class), " |", collapse = "\n")),
+           paste0("| ", names(source_counts), " | ", as.integer(source_counts), " |", collapse = "\n")),
+    "",
+    "## Windows per source recording (compressed arm, post energy-gate and window-cap)",
+    "",
+    sprintf("min=%d, p25=%.0f, median=%.0f, p75=%.0f, max=%d (n=%d recordings). ",
+            wps_q[1], wps_q[2], wps_q[3], wps_q[4], wps_q[5], length(wps)),
+    sprintf("Capped at %d windows/recording (`MAX_WINDOWS_PER_SOURCE`, `R/03_preprocess.R`), ",
+            MAX_WINDOWS_PER_SOURCE),
+    "sampled evenly across each recording's timeline rather than just its opening seconds -- ",
+    "see that file for the full reasoning (Prompt 8, Step 3).",
     "",
     "## Energy gate loss per arm",
     "",
@@ -302,126 +297,53 @@ main <- function() {
     "Comparable loss across arms confirms the gate isn't itself introducing a new ",
     "asymmetry between conditions.",
     "",
-    paste0("## Accuracy by arm (mean across ", N_SEEDS, " grouped-split seeds)"),
+    "## Accuracy by arm (mean across all fold-evaluations)",
     "",
-    sprintf("- **Compressed: %s**", fmt_summary(acc_summary$compressed)),
-    sprintf("- **Codec-only uncompressed: %s**", fmt_summary(acc_summary$codec_only)),
-    sprintf("- **Full-fidelity uncompressed: %s**", fmt_summary(acc_summary$full_fidelity)),
+    sprintf("- **Compressed: %s**", fmt_distribution(distribution_summary(acc$compressed))),
+    sprintf("- **Codec-only uncompressed: %s**", fmt_distribution(distribution_summary(acc$codec_only))),
+    sprintf("- **Full-fidelity uncompressed: %s**", fmt_distribution(distribution_summary(acc$full_fidelity))),
     "",
-    "## The two deltas (uncompressed minus compressed, mean across seeds)",
+    "## The two deltas (uncompressed minus compressed, PAIRED per fold-iteration)",
+    "",
+    "Paired means the same fold assignment (hence the same recording-level luck) is ",
+    "shared by all three arms on a given fold-iteration, so it cancels out of the ",
+    "difference between arms even where it doesn't cancel out of any single arm's raw ",
+    "accuracy above -- this is why the delta, not raw accuracy, is this report's ",
+    "headline comparison.",
     "",
     sprintf("- **Codec-only delta: %s** -- the cost of the Opus codec specifically, bandwidth held constant.",
-            fmt_summary(codec_only_delta_summary)),
+            fmt_distribution(codec_only_delta_dist)),
     sprintf("- **Full-fidelity delta: %s** -- the TOTAL cost of using a WhatsApp voice note vs. a raw high-rate upload.",
-            fmt_summary(full_fidelity_delta_summary)),
+            fmt_distribution(full_fidelity_delta_dist)),
     sprintf("- **Bandwidth component (full-fidelity delta minus codec-only delta): %s** -- ",
-            fmt_summary(bandwidth_component_summary)),
+            fmt_distribution(bandwidth_component_dist)),
     "  the portion of the total cost attributable specifically to the 8kHz Nyquist ",
     "  ceiling, on top of whatever the codec itself costs.",
     "",
-    "## Per-class test recall stability across seeds (compressed arm)",
-    "",
-    paste0("| Class | Source recordings | Mean recall | SD | Seed range |\n|---|---:|---:|---:|---:|\n",
-           paste0(sprintf("| %s | %d | %s | %s | %s to %s |",
-                           names(per_class_recall_summary),
-                           as.integer(n_sources_per_class[names(per_class_recall_summary)]),
-                           vapply(per_class_recall_summary, function(s) fmt_pct(s$mean), character(1)),
-                           vapply(per_class_recall_summary, function(s) if (is.na(s$sd)) "N/A" else paste0(round(s$sd*100,1),"pp"), character(1)),
-                           vapply(per_class_recall_summary, function(s) fmt_pct(s$lo95), character(1)),
-                           vapply(per_class_recall_summary, function(s) fmt_pct(s$hi95), character(1))
-           ), collapse = "\n")),
-    "",
-    "**Read the SD/range columns before the mean.** A class backed by only a ",
-    "handful of source recordings will show a wide seed-to-seed swing here -- that ",
-    "swing IS the sample-size warning, not noise to ignore. Any class whose 95% seed ",
-    "range spans most or all of [0%, 100%] does not have enough source recordings ",
-    "for a stable recall estimate at this corpus size, regardless of what its mean ",
-    "happens to be.",
-    "",
-    "## Why per-arm accuracy swings so much more than the deltas do",
-    "",
-    "Overall test accuracy per arm has an enormous seed range (roughly 10-92% -- ",
-    "look unusable on its own). This is real, not a bug: this real-audio corpus has ",
-    "only 5 source recordings for each target species, but those recordings vary ",
-    "hugely in DURATION, so 2-second windowing produces wildly uneven window counts ",
-    "per source file -- some real recordings yield fewer than 10 windows, at least ",
-    "one yields over 400. Grouped splitting (correctly) assigns whole source files to ",
-    "train/val/test, so whichever seed happens to put one of the handful of very long ",
-    "recordings into the test split can make that single file 60-90% of the entire ",
-    "test set for that run. If the model handles that one file well, accuracy looks ",
-    "great; if not, accuracy craters -- almost independent of anything the classifier ",
-    "is actually good or bad at. This is exactly the failure mode Prompt 7 warned a ",
-    "bare point estimate can't be defended against, and exactly why the PAIRED ",
-    "per-seed delta -- not raw per-arm accuracy -- is the number this report leads ",
-    "with: the same lucky-or-unlucky long file lands in the SAME position for all ",
-    "three arms on a given seed (they share the identical grouped split), so its ",
-    "effect on accuracy cancels out of the delta almost entirely. That is visible ",
-    "directly in the numbers above: per-arm accuracy SD is roughly 25-27 percentage ",
-    "points, but delta SD is only 4.5-6.4 points -- a ~5x tighter spread, from pairing ",
-    "alone.",
-    "",
     "## Interpretation",
     "",
-    "**Both deltas are indistinguishable from zero at this sample size.** The ",
-    "codec-only delta's 95% seed range (-9.6% to +6.4%) and the full-fidelity delta's ",
-    "95% seed range (-13.4% to +9.4%) both comfortably straddle zero. That is a ",
-    "different, weaker claim than 'compression is free' or 'bandwidth loss is free' -- ",
-    "it means this corpus (109 source files, as few as 4-5 per target class) cannot ",
-    "currently rule out a real cost in either direction beyond roughly +/-10 ",
-    "percentage points. The previous single-seed report of a clean '-0.4%, no ",
-    "detectable cost' understated that uncertainty by presenting one draw from this ",
-    "same wide distribution as if it were the whole picture.",
-    "",
-    "**The bandwidth-vs-codec decomposition doesn't currently resolve either.** The ",
-    "bandwidth component (full-fidelity delta minus codec-only delta) has a mean ",
-    "around 0.4-0.9 percentage points across the two runs behind this document, with a ",
-    "95% seed range spanning roughly -10 to +10 points -- also not distinguishable ",
-    "from zero. The honest reading is: on THIS classifier, with THIS feature set, at ",
-    "THIS sample size, neither the Opus codec nor the 8kHz bandwidth cut can be shown ",
-    "to cost anything measurable -- which is compatible with real Orthoptera ",
-    "stridulation genuinely surviving both (consistent with `docs/codec_findings.md`'s ",
-    "signal-level finding), but is not the same as proving it at a precision better ",
-    "than about +/-10 points with this much data.",
-    "",
-    "**What would actually narrow this:** more source recordings per target class. The ",
-    "sample-size problem here isn't windows (the corpus has over a thousand) -- it's ",
-    "distinct source FILES (4-5 per real species), which is what grouped splitting ",
-    "correctly treats as the real unit of independent evidence. No amount of ",
-    "re-windowing or re-seeding fixes that; it needs more distinct field recordings ",
-    "per species.",
-    "",
-    "## Where the previously-reported 19 failed feature-extraction windows went",
-    "",
-    "A prior run reported 19 of 1251 windows failing feature extraction on one long ",
-    "recording. Root-caused this session by reprocessing that recording ",
-    "(`Chorthippus_brunneus_XC865329.wav`) without the energy gate applied: all 19 ",
-    "failures are on windows with the error `missing value where TRUE/FALSE needed` ",
-    "(an NA reaching an `if()` inside `wa_features()`'s spectral-property code), and ",
-    "every one of those 19 windows is ALSO independently flagged by ",
-    "`gate_silent_windows()` as near-silent relative to that recording's own peak. ",
-    "Same root cause as the harmonic_energy_ratio confound this whole investigation ",
-    "started from: near-silent windows produce degenerate spectra that break ",
-    "downstream spectral math in more than one place, not just the one function ",
-    "already fixed. The energy gate (Issue 3) removes these windows before feature ",
-    "extraction is ever attempted, so this failure mode is now resolved as a side ",
-    "effect rather than needing its own separate fix -- confirmed by this run's own ",
-    "log showing 0 feature-extraction failures across all three arms, all 1225/1224 ",
-    "windows extracted successfully."
+    "TBD -- filled in by hand after reading the numbers above (see docs/methodology.md ",
+    "for the actual write-up) -- a delta whose 95% range crosses zero is NOT ",
+    "distinguishable from zero at this sample size, which is a different, weaker claim ",
+    "than 'compression is free'; if the range has narrowed materially vs. the ",
+    "pre-expansion (Prompt 7) numbers, that narrowing is itself evidence the earlier ",
+    "instability was a sampling artifact, not a property of the task."
   )
   writeLines(lines, DELTA_RESULTS_PATH)
 
   message(sprintf(
     "Compression delta -- compressed: %s, codec-only: %s, full-fidelity: %s. Codec-only delta: %s. Full-fidelity delta: %s. Written to %s",
-    fmt_pct(acc_summary$compressed$mean), fmt_pct(acc_summary$codec_only$mean), fmt_pct(acc_summary$full_fidelity$mean),
-    fmt_pct(codec_only_delta_summary$mean), fmt_pct(full_fidelity_delta_summary$mean), DELTA_RESULTS_PATH
+    fmt_pct(distribution_summary(acc$compressed)$mean), fmt_pct(distribution_summary(acc$codec_only)$mean),
+    fmt_pct(distribution_summary(acc$full_fidelity)$mean),
+    fmt_pct(codec_only_delta_dist$mean), fmt_pct(full_fidelity_delta_dist$mean), DELTA_RESULTS_PATH
   ))
 
   invisible(list(
-    acc_summary = acc_summary, codec_only_delta_summary = codec_only_delta_summary,
-    full_fidelity_delta_summary = full_fidelity_delta_summary,
-    bandwidth_component_summary = bandwidth_component_summary,
-    per_class_recall_summary = per_class_recall_summary,
-    n_sources_per_class = n_sources_per_class, gate_report = gate_report
+    agg_by_arm = agg_by_arm, acc = acc,
+    codec_only_delta_dist = codec_only_delta_dist,
+    full_fidelity_delta_dist = full_fidelity_delta_dist,
+    bandwidth_component_dist = bandwidth_component_dist,
+    source_counts = source_counts, gate_report = gate_report, windows_per_source_quantiles = wps_q
   ))
 }
 

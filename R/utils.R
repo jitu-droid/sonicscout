@@ -139,3 +139,29 @@ gate_silent_windows <- function(windows, threshold_db = ENERGY_GATE_DB) {
   if (!is.finite(peak_db)) return(rep(FALSE, length(windows)))
   (levels_db - peak_db) > threshold_db
 }
+
+# ---- Distribution summary (shared: R/05_train.R, R/07_compression_delta.R) --
+# Prompt 7/8: never report a single point estimate from one split/seed/fold
+# on a corpus this small -- always the distribution across repeats.
+
+#' Mean/sd/95%-range summary of a numeric vector across repeated
+#' folds/seeds -- the honest quantity, not a bare point estimate.
+distribution_summary <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) {
+    return(list(mean = NA_real_, sd = NA_real_, lo95 = NA_real_, hi95 = NA_real_, n = 0L))
+  }
+  list(mean = mean(x), sd = stats::sd(x),
+       lo95 = unname(stats::quantile(x, 0.025)), hi95 = unname(stats::quantile(x, 0.975)),
+       n = length(x))
+}
+
+fmt_pct <- function(x) if (is.na(x)) "N/A" else paste0(round(x * 100, 1), "%")
+
+#' `distribution_summary()` rendered as "mean% (sd Xpp, range Y% to Z%)".
+fmt_distribution <- function(s) {
+  if (s$n == 0) return("N/A")
+  sprintf("%s (sd %s, range %s to %s, n=%d)", fmt_pct(s$mean),
+          if (is.na(s$sd)) "N/A" else paste0(round(s$sd * 100, 1), "pp"),
+          fmt_pct(s$lo95), fmt_pct(s$hi95), s$n)
+}

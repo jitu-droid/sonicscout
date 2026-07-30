@@ -68,14 +68,36 @@ INSECTSET459_TARGET_SPECIES <- list(
   list(species = "Chorthippus_brunneus",   label = "chorthippus_brunneus",   group = "Orthoptera"),
   list(species = "Cicada_orni",            label = "cicada_orni",           group = "Cicadidae")
 )
-# Raised from 20 -> 30 (Prompt 5, Step 2c): 40 source files across 3 species
-# was thin for a grouped split. Individual downloads also get a longer
-# per-file timeout than the 60s default here (see fetch_insectset459) --
-# the first pass's 60s timeout left some attempts short on a slow
-# connection (~0.5MB/s observed); idempotency means re-running only
-# retries what's still missing, it doesn't re-fetch what already succeeded.
-INSECTSET459_MAX_FILES_PER_SPECIES <- 30
+# Raised from 20 -> 30 (Prompt 5) -> 45 (Prompt 8, Step 2): Prompt 7's
+# 50-seed analysis found this classifier's accuracy swinging ~10-92% seed
+# to seed with only 22/17/20 source files per real species, because a
+# grouped split's test set for a class that small is often ONE recording
+# -- accuracy then tracks which recording happened to land in test, not
+# anything the model is good or bad at. The annotation CSV has far more
+# available (~184/102/428 rows for the 3 target species) than was ever
+# fetched; targeting 40-50 per species stays well inside that and inside
+# the 2GB cap. Individual downloads get a longer per-file timeout than the
+# 60s default here (see fetch_insectset459); idempotency means re-running
+# only retries what's still missing, it doesn't re-fetch what already
+# succeeded.
+INSECTSET459_MAX_FILES_PER_SPECIES <- 45
 INSECTSET459_TIMEOUT_S <- 120
+
+# The annotation CSV exposes no duration or file-size column (checked --
+# see PROGRESS.md), so "prefer many short clips over few long ones" (Prompt
+# 8, Step 2) is implemented via a lightweight HTTP HEAD probe per candidate
+# before committing to a full download, rather than a CSV sort. Skipping
+# anything the probe reports over this size avoids both the timeout risk
+# large files caused in earlier sessions AND the exact problem Step 1
+# fixed at the classifier end: a handful of very long recordings each
+# contributing hundreds of windows and dominating whichever fold they land
+# in. If the HEAD probe can't determine a size, the candidate is now SKIPPED
+# (not attempted) -- see fetch_insectset459() for why: xeno-canto.org never
+# sends Content-Length on HEAD, and its files run large (37MB and 71MB+
+# seen directly this session), so "unknown" turned out to mean "probably
+# large," not "probably fine."
+INSECTSET459_MAX_FILE_BYTES <- 20 * 1024^2  # ~20MB
+INSECTSET459_HEAD_TIMEOUT_S <- 15
 
 # ---- Manifest -----------------------------------------------------------
 
@@ -220,29 +242,60 @@ fetch_esc50 <- function(manifest_env) {
   esc_meta <- utils::read.csv(meta_path, stringsAsFactors = FALSE)
   kept <- esc_meta[esc_meta$category %in% AMBIENT_CATEGORIES, ]
 
+  # BUG FOUND (Prompt 8, Step 2): this loop used to unconditionally
+  # append_manifest() every matching clip on EVERY run of this script,
+  # unlike download_tracked() (which checks `file %in% manifest$file`
+  # first). Across this project's multiple sessions, that meant the same
+  # ~561 ESC-50 files got re-registered into manifest.csv on every re-run
+  # -- 5 duplicate rows per file found in the manifest this session,
+  # inflating the "total bytes downloaded" the 2GB cap checks against by
+  # ~1.5GB of PHANTOM re-counted bytes (nothing was actually downloaded
+  # again; the same on-disk file's size was just added to the running
+  # total repeatedly). This silently and falsely tripped the download cap
+  # for Step 2's corpus expansion, blocking every single new download
+  # attempt. Fixed by checking for an existing row first, same as
+  # download_tracked().
+  n_registered <- 0
   for (i in seq_len(nrow(kept))) {
     src_wav <- file.path(extract_dir, "audio", kept$filename[i])
     if (!file.exists(src_wav)) next
+    if (src_wav %in% manifest_env$manifest$file) next
     manifest_env$manifest <- append_manifest(manifest_env$manifest, list(
       file = src_wav, source = "ESC-50", source_url = ESC50_ZIP_URL,
       label = paste0("ambient_", kept$category[i]), license = ESC50_LICENSE,
       md5 = unname(tools::md5sum(src_wav)), bytes = file.info(src_wav)$size,
       downloaded_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
     ))
+    n_registered <- n_registered + 1
   }
 
-  message("ESC-50: registered ", nrow(kept), " ambient clips across ",
-          length(AMBIENT_CATEGORIES), " categories in the manifest.")
+  message("ESC-50: ", n_registered, " newly registered, ", nrow(kept) - n_registered,
+          " already in the manifest, of ", nrow(kept), " matching clips across ",
+          length(AMBIENT_CATEGORIES), " categories.")
   invisible(kept)
 }
 
 # ---- InsectSet459 (real target-species audio, direct source URLs) --------
 
+#' HEAD-probe a URL's Content-Length without downloading the body. Returns
+#' NA_real_ if the request fails or the header is absent (some hosts don't
+#' send Content-Length on HEAD) -- callers should treat NA as "unknown",
+#' not "large".
+head_content_length <- function(url, timeout_s = INSECTSET459_HEAD_TIMEOUT_S) {
+  tryCatch({
+    req <- httr2::request(url) |> httr2::req_method("HEAD") |> httr2::req_timeout(timeout_s)
+    resp <- httr2::req_perform(req)
+    len <- httr2::resp_header(resp, "content-length")
+    if (is.null(len)) NA_real_ else as.numeric(len)
+  }, error = function(e) NA_real_)
+}
+
 #' Fetch the InsectSet459 annotation CSV (small, ~6.9MB metadata file --
-#' NOT one of the multi-GB audio zips) and, for each target species, sample
-#' up to INSECTSET459_MAX_FILES_PER_SPECIES recordings and download them
-#' directly from their original iNaturalist source URL (the CSV's `file`
-#' column), bypassing the zips entirely.
+#' NOT one of the multi-GB audio zips) and, for each target species, download
+#' recordings directly from their original iNaturalist source URL (the CSV's
+#' `file` column), bypassing the zips entirely, until
+#' INSECTSET459_MAX_FILES_PER_SPECIES successful downloads are reached or the
+#' species' candidates are exhausted.
 fetch_insectset459 <- function(manifest_env) {
   csv_path <- file.path(RAW_DIR, "insectset459", "annotation.csv")
   ok <- download_tracked(INSECTSET459_CSV_URL, csv_path, "InsectSet459-meta",
@@ -273,19 +326,42 @@ fetch_insectset459 <- function(manifest_env) {
     }
 
     set.seed(20260729)
-    take_idx <- if (nrow(sub_df) > INSECTSET459_MAX_FILES_PER_SPECIES) {
-      sample(seq_len(nrow(sub_df)), INSECTSET459_MAX_FILES_PER_SPECIES)
-    } else {
-      seq_len(nrow(sub_df))
-    }
+    shuffled_idx <- sample(seq_len(nrow(sub_df)))
 
     dest_dir <- file.path(RAW_DIR, "insectset459", target$label)
     n_ok <- 0
-    for (i in take_idx) {
+    n_skipped_large <- 0
+    n_attempted <- 0
+    for (i in shuffled_idx) {
+      if (n_ok >= INSECTSET459_MAX_FILES_PER_SPECIES) break
       row <- sub_df[i, ]
       file_url <- row$file
       if (is.na(file_url) || file_url == "") next
       dest_path <- file.path(dest_dir, row$file_name)
+
+      if (!file.exists(dest_path)) {
+        size_bytes <- head_content_length(file_url)
+        # Skip on an unknown size too, not just a known-large one. Verified
+        # empirically this session: static.inaturalist.org always returns
+        # Content-Length on HEAD, but xeno-canto.org's /download endpoint
+        # NEVER does (confirmed against 3 real URLs) -- and xeno-canto files
+        # in this CSV run large (one candidate turned out to be 37MB, another
+        # 71MB+, discovered only because a full download was attempted and
+        # had to be killed mid-transfer after burning several minutes and
+        # bandwidth on ONE file). "Unknown" was originally meant to fail
+        # open (attempt anyway) for hosts that just don't send the header on
+        # legitimately small files; in practice here it was hiding exactly
+        # the large-file risk this filter exists to catch, so it now fails
+        # closed. InsectSet459 has far more candidates than needed, nearly
+        # all iNaturalist (which always reports its size), so this costs
+        # negligible coverage.
+        if (is.na(size_bytes) || size_bytes > INSECTSET459_MAX_FILE_BYTES) {
+          n_skipped_large <- n_skipped_large + 1
+          next
+        }
+      }
+
+      n_attempted <- n_attempted + 1
       if (download_tracked(file_url, dest_path, "InsectSet459", target$label, row$license, manifest_env,
                             timeout_s = INSECTSET459_TIMEOUT_S)) {
         n_ok <- n_ok + 1
@@ -293,7 +369,9 @@ fetch_insectset459 <- function(manifest_env) {
     }
 
     message("InsectSet459 '", target$species, "': downloaded ", n_ok, " of ",
-            length(take_idx), " attempted (", nrow(sub_df), " available in the CSV).")
+            n_attempted, " attempted (", n_skipped_large, " skipped as >",
+            INSECTSET459_MAX_FILE_BYTES / 1e6, "MB by HEAD probe; ",
+            nrow(sub_df), " total available in the CSV).")
   }
 
   invisible(annotation)

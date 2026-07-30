@@ -637,25 +637,39 @@ tune away.
   honest one, deliberately.
 - **Temporal features targeting a specific, cited biological mechanism
   produced a specific, measured gain -- in exactly the class they were
-  aimed at, not classes generally (Prompt 9, Part 1).** *C. biguttulus*
-  and *C. brunneus* are sympatric congeners whose species boundary is
-  maintained acoustically by TEMPORAL song structure (syllable pattern,
-  phrase duration), not spectral content (von Helversen & von Helversen
-  1997, *J Comp Physiol A* 180:373-386; Gottsberger & Mayer 2007, *J Comp
-  Physiol A* 193:703-714, on hybrid syllable-structure breakdown). Added
-  11 temporal features (pulse/syllable rate, inter-pulse-interval stats,
-  an envelope modulation spectrum, temporal entropy, duty cycle,
-  phrase-level bout structure) and raised the training window from 2.0s
-  to 4.0s so it could contain a full song phrase (literature: phrases run
-  ~2-4s). Result: *C. brunneus* recall rose 34% -> 43.1%; *C. biguttulus*
-  stayed flat. **Whether these features rank highly in variable importance
-  -- itself an open question worth reporting either way -- turned out to
-  be mostly NO**: only 2 of 11 (`envelope_mod_peak_ratio`,
-  `temporal_entropy`) place in the upper half of 32 features by Gini
-  importance; the rest rank in the bottom third, below every MFCC. The
-  accuracy gain is real; no single temporal feature is individually as
-  powerful a split as the existing spectral features -- they help in
-  combination, not individually.
+  aimed at, not classes generally (Prompt 9, Part 1) -- and Prompt 10's
+  ablation confirmed most of that gain is actually attributable to the
+  features, not a window-length change made in the same run.** *C.
+  biguttulus* and *C. brunneus* are sympatric congeners whose species
+  boundary is maintained acoustically by TEMPORAL song structure (syllable
+  pattern, phrase duration), not spectral content (von Helversen & von
+  Helversen 1997, *J Comp Physiol A* 180:373-386; Gottsberger & Mayer 2007,
+  *J Comp Physiol A* 193:703-714, on hybrid syllable-structure breakdown).
+  Added 11 temporal features and raised the training window from 2.0s to
+  4.0s (literature: song phrases run ~2-4s) in the same Prompt 9 run --
+  *C. brunneus* recall rose 34% -> 43.1%, *C. biguttulus* stayed flat, but
+  which change caused it was an open question until Prompt 10 ran a
+  4-arm ablation (identical folds throughout): most of the gain (paired
+  *C. brunneus* recall delta +6.1pp at 4s) is attributable to temporal
+  features, corroborated by an INDEPENDENT second measurement at 2s
+  (+3.9pp, same direction) -- window length contributes a smaller,
+  separately-confirmed effect (+3.5pp, clean paired comparison) that's
+  concentrated on *C. brunneus* recall specifically, not overall accuracy
+  (nearly identical at both window lengths within a feature set: 66.2%
+  vs. 66.8% spectral-only, 68.5% vs. 68.4% with temporal). Neither
+  individual paired delta fully excludes zero at 95% confidence alone, but
+  two independent same-direction replications is stronger evidence than
+  either alone -- reported as corroborated, not fully confirmed, which is
+  NOT the clean negative result ("most of it was window length") the
+  confound raised as a live possibility. (`docs/ablation_results.md`)
+  **Whether these features rank highly in variable importance -- itself an
+  open question worth reporting either way -- turned out to be mostly
+  NO**: only 2 of 11 (`envelope_mod_peak_ratio`, `temporal_entropy`) place
+  in the upper half of 32 features by Gini importance; the rest rank in
+  the bottom third, below every MFCC. The accuracy gain is real and now
+  twice-replicated; no single temporal feature is individually as powerful
+  a split as the existing spectral features -- they help in combination,
+  not individually.
 - **Neither WhatsApp's Opus codec nor its 16kHz bandwidth cut can be shown
   to cost measurable classifier accuracy at this sample size -- which is a
   different, weaker claim than "compression is free," though the interval
@@ -678,21 +692,38 @@ tune away.
   itself evidence the earlier instability was a sampling artifact, not a
   property of the task. Full account in `docs/compression_delta.md` and
   the Session 5/6 sections above.
-- **A 22-ish% false-positive rate is the raw-argmax number, not a fixed
-  property of the model -- and a measured operating-point analysis finds
-  a materially better deployable trade-off exists (Prompt 9, Part 2).**
-  Swept the confidence threshold already emitted with every prediction
-  against the SAME out-of-fold predictions the CV accuracy numbers come
-  from (not the final model's own training predictions). At threshold
-  0.45: 97.5% precision, 76.2% recall (detection rate), 8.5%
-  false-positive rate -- chosen as the lowest threshold clearing a 10%
-  false-alarm bar, on the deployment reasoning that a screening tool a
-  farmer acts on loses more value from repeated false alarms (destroys
-  trust) than from a missed detection (the existing low-confidence path
-  already offers a resend-a-better-recording recovery). This is now
-  `R/06_predict.R`'s actual `LOW_CONFIDENCE_THRESHOLD` default -- the
-  previous 0.4 was never validated against any measurement at all.
-  (`docs/operating_point.md`)
+- **A 22-ish% false-positive rate is the raw-argmax, WINDOW-level number,
+  not a fixed property of the model and not even the right unit to
+  measure -- `predict_pest()` pools predictions across a clip's windows
+  before deciding, and a measured, CLIP-level operating-point analysis
+  finds a materially better deployable trade-off exists (Prompt 9, Part 2;
+  corrected to clip-level in Prompt 10, Part 2).** Prompt 9's original
+  analysis swept the confidence threshold over WINDOW-level out-of-fold
+  predictions, understating the deployed system. Prompt 10 rebuilt it to
+  aggregate predictions exactly as `predict_pest()` does (mean probability
+  vector across a clip's windows, then argmax + confidence) before
+  sweeping. At threshold 0.45 (clip-level): 90.1% precision, 72.7% recall
+  (detection rate), 7.7% false-positive rate -- chosen as the lowest
+  threshold clearing a 10% false-alarm bar, same deployment reasoning as
+  before (a screening tool a farmer acts on loses more value from repeated
+  false alarms than from a missed detection, which has a resend-recording
+  recovery path). **The window-vs-clip comparison is itself a result, and
+  it's more nuanced than "pooling helps across the board":** clip-level
+  accuracy and false-positive rate ARE both better (as expected from
+  pooling), but clip-level PRECISION reads LOWER than window-level at the
+  same threshold (90.1% vs. 97.5%) -- traced to a real class-balance shift
+  (ambient recordings are short, contribute few windows each; pest
+  recordings run longer, contribute many, so windows and clips are
+  differently-balanced populations, not just a noisier vs. cleaner view
+  of the same one), confirmed by direct investigation to be a genuine
+  effect, not a bug. Recall is also slightly lower at clip level (72.7%
+  vs. 76.2%) for a separate, genuine reason: pooling can dilute one
+  strongly-confident correct window with weaker ones from the same clip.
+  This is now `R/06_predict.R`'s actual `LOW_CONFIDENCE_THRESHOLD` default
+  -- the original 0.4 was never validated against any measurement at all.
+  A short real voice note (10-30s) will see less pooling benefit than the
+  corpus-wide analysis suggests, since many reference recordings here are
+  much longer. (`docs/operating_point.md`)
 - **The 8kHz Nyquist ceiling is real and unforgiving,** confirmed on both
   a synthetic 10kHz control tone and, indirectly, on every species'
   >8kHz retention column reading exactly 0.
@@ -766,39 +797,49 @@ tune away.
 
 ### 4. The single result to lead with on one slide
 
-**Revised three times now, and Prompt 9 changes which result actually
-deserves the slide.** Prompt 7 found the original compression-delta point
-estimate indefensible; Prompt 8 fixed the underlying cause and
-re-measured at a materially tighter interval; Prompt 9 adds two genuinely
-new candidates (a targeted biological fix, and a real deployment
-decision) that are arguably more compelling to lead with than the
-compression-delta story this slot has held since Session 3.
+**Revised four times now, and Prompt 10 corrects the numbers on both of**
+**Prompt 9's new candidates without changing which one leads.** Prompt 7
+found the original compression-delta point estimate indefensible; Prompt
+8 fixed the underlying cause and re-measured at a materially tighter
+interval; Prompt 9 added two genuinely new candidates (a targeted
+biological fix, and a real deployment decision); Prompt 10 corrected the
+operating-point numbers (they were window-level, understating the
+deployed system) and confirmed the biological fix wasn't confounded with
+an unrelated window-length change.
 
-**New leading candidate: the operating-point analysis.** A raw 21.9%
-false-positive rate sounds like a system that can't be deployed. The
-honest, complete answer is: that number is the model's un-gated argmax
-decision, and the model already emits a confidence score with every
-prediction that was never actually tuned against a measured trade-off
-before this prompt. Sweeping that threshold against real, held-out
-predictions finds threshold 0.45 gives 97.5% precision / 76.2% recall /
-8.5% false-positive rate -- a genuinely deployable number, reached by
-measuring a trade-off explicitly (fewer false alarms preserve farmer
-trust; a missed detection has a recovery path a false alarm doesn't) and
-setting it as the actual default, not by tuning the underlying model.
-This is the strongest "is this real" answer this project has produced:
-it turns a scary headline number into a defensible deployment decision
-with a stated, principled trade, in one slide.
+**Leading candidate: the operating-point analysis, now at the CORRECT
+(clip-level) numbers.** A raw 21.9% false-positive rate sounds like a
+system that can't be deployed. The honest, complete answer is: that
+number is the model's un-gated argmax decision on a single WINDOW, not
+even the unit a farmer's voice note actually produces (`predict_pest()`
+pools across a clip's windows before deciding). Sweeping the threshold
+against clip-level out-of-fold predictions -- aggregated exactly the way
+the deployed system aggregates them -- finds threshold 0.45 gives 90.1%
+precision / 72.7% recall / 7.7% false-positive rate, a genuinely
+deployable number reached by measuring a trade-off explicitly (fewer
+false alarms preserve farmer trust; a missed detection has a recovery
+path a false alarm doesn't) and setting it as the actual default. The
+window-vs-clip gap itself is a finding worth including on the same slide:
+pooling improves accuracy and false-positive rate as expected, but also
+reveals that the ORIGINAL window-level precision number (97.5%) was
+inflated by a class-balance artifact, not a real property of the model --
+a second example of this project catching itself reporting a number that
+looked better than it was.
 
-**Second candidate: the *C. brunneus* biological fix, if the audience
-cares about the science.** *C. biguttulus* and *C. brunneus* are a
-documented, cited (von Helversen & von Helversen 1997; Gottsberger &
-Mayer 2007) speciation system where the discriminating signal is
-temporal, not spectral -- this project's original feature set was almost
-entirely spectral, diagnosed the mismatch, added temporal features
-targeting exactly that mechanism, and *C. brunneus* recall rose 34% ->
-43.1% specifically (not classes broadly). This demonstrates the project
-diagnosing an error rather than just reporting it, which is a stronger
-story than the accuracy number alone regardless of whether a judge finds
+**Second candidate: the *C. brunneus* biological fix, now with the
+confound resolved -- a stronger candidate than it was in Prompt 9.**
+*C. biguttulus* and *C. brunneus* are a documented, cited (von Helversen &
+von Helversen 1997; Gottsberger & Mayer 2007) speciation system where the
+discriminating signal is temporal, not spectral -- this project's
+original feature set was almost entirely spectral, diagnosed the
+mismatch, added temporal features targeting exactly that mechanism, and
+*C. brunneus* recall rose 34% -> 43.1% specifically (not classes
+broadly). Unlike in Prompt 9, this is no longer confounded with a
+simultaneous window-length change: Prompt 10's ablation isolated the two
+effects and found the gain corroborated at two independent window
+lengths. This demonstrates the project diagnosing an error, forming a
+testable hypothesis, and confirming it properly -- a stronger story than
+the accuracy number alone regardless of whether a judge finds
 9 points of recall impressive.
 
 **Third (the prior leading candidate, still true, still worth keeping):
@@ -1159,4 +1200,48 @@ In priority order, by expected value per unit effort:
    and phone; the webhook itself is fully verified against the real model
    otherwise (`BLOCKERS.md` #2).
 
-Per Prompt 8's closing instruction: stopping here.
+Per Prompt 8's closing instruction: stopping here (superseded by
+Prompts 9 and 10, below and in the sections revised in place above).
+
+---
+
+## Headline numbers (Prompt 10, Part 3)
+
+One place to look when writing slides, so no number gets quoted from
+memory or from a stale doc. Every figure below is a mean/point estimate
+with its interval and sample size stated alongside it, and the file it
+was generated from -- re-run that file to reproduce it, don't retype it
+by hand into a slide.
+
+| Metric | Value | Interval / SD | n | Source |
+|---|---|---|---|---|
+| Codec survivability, *C. biguttulus* | 0.986 | -- | 5 recordings | `docs/codec_findings.md` |
+| Codec survivability, *C. brunneus* | 0.956 | -- | 5 recordings | `docs/codec_findings.md` |
+| Codec survivability, *Cicada orni* | 0.972 | -- | 5 recordings | `docs/codec_findings.md` |
+| Codec survivability, real chewing sounds (range across 5 species) | 0.342 to 0.892 | -- | 1-5 recordings/species | `docs/codec_findings.md` |
+| Classifier overall test accuracy (window-level, argmax) | 68.5% | sd 6.5pp, range 56.2-78.3% | 50 fold-evaluations | `docs/classifier_results.md` |
+| Classifier FPR vs. ambient (window-level, argmax, no threshold) | 21.9% | sd 8pp, range 8.1-39.2% | 50 fold-evaluations | `docs/classifier_results.md` |
+| Recall, *C. biguttulus* | 62.4% | sd 12.9pp, range 37.8-83.1% | 50 fold-evaluations, 45 source recordings | `docs/classifier_results.md` |
+| Recall, *C. brunneus* | 43.1% | sd 13.5pp, range 18.9-68.4% | 50 fold-evaluations, 45 source recordings | `docs/classifier_results.md` |
+| Recall, *Cicada orni* | 92.5% | sd 8pp, range 74.9-100% | 50 fold-evaluations, 45 source recordings | `docs/classifier_results.md` |
+| Majority-class baseline accuracy | 27.1% | -- | full corpus | `docs/operating_point.md` |
+| Chance rate (8 classes) | 12.5% | -- | -- | `docs/operating_point.md` |
+| Compression delta, codec-only | -1.1% | sd 4pp, range -8.8% to +6.0% | 50 fold-evaluations | `docs/compression_delta.md` |
+| Compression delta, full-fidelity | +2.8% | sd 5pp, range -6.2% to +13.0% | 50 fold-evaluations | `docs/compression_delta.md` |
+| Bandwidth component of compression delta | +3.9% | sd 5.4pp, range -6.5% to +13.1% | 50 fold-evaluations | `docs/compression_delta.md` |
+| Ablation: temporal-feature effect on *C. brunneus* recall, at 4s window | +6.1pp | sd 7.3pp, range -5.1% to +23.8% | 50 fold-evaluations, paired | `docs/ablation_results.md` |
+| Ablation: temporal-feature effect on *C. brunneus* recall, at 2s window (independent replication) | +3.9pp | sd 3.4pp, range -1.7% to +9.4% | 50 fold-evaluations, paired | `docs/ablation_results.md` |
+| Ablation: window-length effect on *C. brunneus* recall (spectral-only, paired) | +3.5pp | sd 7.1pp, range -7.9% to +18% | 50 fold-evaluations, paired | `docs/ablation_results.md` |
+| Ablation: temporal-feature effect on overall accuracy, at 4s window | +2.3pp | sd 2.7pp, range -2.4% to +7.1% | 50 fold-evaluations, paired | `docs/ablation_results.md` |
+| Variable importance: temporal features ranking in top half | 2 of 11 | (`envelope_mod_peak_ratio` rank 11, `temporal_entropy` rank 19, of 32 features) | 1 final model | `docs/figures/variable_importance.png` |
+| Operating point threshold (clip-level, chosen) | 0.45 | -- | -- | `docs/operating_point.md`, `R/06_predict.R` |
+| Operating point precision (clip-level, at threshold 0.45) | 90.1% | -- | 2750 clip-level predictions | `docs/operating_point.md` |
+| Operating point recall/detection rate (clip-level, at threshold 0.45) | 72.7% | -- | 2750 clip-level predictions | `docs/operating_point.md` |
+| Operating point FPR (clip-level, at threshold 0.45) | 7.7% | -- | 2750 clip-level predictions | `docs/operating_point.md` |
+| Operating point FPR (window-level, at threshold 0.45, for comparison) | 8.5% | -- | 14040 window-level predictions | `docs/operating_point.md` |
+| Per-species detection rate at threshold 0.45 (clip-level): *C. biguttulus* / *C. brunneus* / *Cicada orni* | 70.7% / 58.7% / 88.7% | -- | 2750 clip-level predictions | `docs/operating_point.md` |
+| Windows per clip after energy gating (compressed arm) | median 2 | min 1, p25 2, p75 6, max 20 | 299 source recordings | `docs/operating_point.md` |
+| Real source recordings per target species | 45 each | -- | -- | `docs/classifier_results.md`, `data/raw/manifest.csv` |
+| Real ambient source recordings | 145 | -- | -- | `docs/classifier_results.md` |
+| Window length / hop | 4.0s / 2.0s | -- | -- | `R/utils.R` |
+| K-fold CV design | 5 folds x 10 repeats | -- | 50 fold-evaluations total | `R/05_train.R` |

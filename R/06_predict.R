@@ -35,13 +35,30 @@ LOW_CONFIDENCE_THRESHOLD <- 0.4  # tunable; see docs/methodology.md for how this
 
 #' Predict the top-3 pest/ambient classes for one audio file.
 #'
+#' Windows and energy-gates the incoming clip exactly as R/03_preprocess.R
+#' does for training data (same WINDOW_SECONDS/HOP_SECONDS/ENERGY_GATE_DB,
+#' R/utils.R) -- deliberately NOT a single feature vector over the whole
+#' clip. Before Prompt 7 this function extracted one feature vector from the
+#' entire incoming recording, while training extracted one per 2-second
+#' window; a long recording with quiet gaps would dilute that single
+#' whole-clip vector with content the training pipeline would have gated
+#' out, a train/serve mismatch nobody had checked for. Predictions from
+#' surviving windows are averaged (mean of each window's class-probability
+#' vector) into one final call.
+#'
 #' @param file_path Path to an audio file (`.opus`, `.ogg`, `.wav`, ...).
 #' @param model_path Path to the serialised model bundle from `R/05_train.R`.
 #' @param threshold Confidence below which `low_confidence` is set `TRUE`.
 #'
 #' @return A list: `top_classes` (character, length <= 3, most confident
-#'   first), `confidences` (numeric, same length/order), `low_confidence`
-#'   (logical), and `all_probabilities` (named numeric vector, every class).
+#'   first; length 0 if the whole clip was gated as silent), `confidences`
+#'   (numeric, same length/order), `low_confidence` (logical, always TRUE
+#'   when gated), `gated_silent` (logical -- TRUE means every window in the
+#'   clip was below the energy gate, i.e. no predictable content at all, as
+#'   distinct from an ordinary low-confidence call on real content),
+#'   `n_windows_used`/`n_windows_total` (gate bookkeeping), and
+#'   `all_probabilities` (named numeric vector, every class; length 0 if
+#'   gated).
 #'
 #' NOTE ON "confidences": these are random forest vote proportions
 #' (fraction of trees voting for each class), not formally calibrated
@@ -55,17 +72,35 @@ predict_pest <- function(file_path, model_path = MODEL_PATH, threshold = LOW_CON
   bundle <- readRDS(model_path)
 
   wave <- whatsappaudioR::wa_read(file_path)
-  feats <- whatsappaudioR::wa_features(wave)
+  trimmed <- trim_silence(wave@left, wave@samp.rate)
+  windows <- window_signal(trimmed, wave@samp.rate)
+  keep <- gate_silent_windows(windows)
+  n_total <- length(windows)
+  n_used <- sum(keep)
 
-  missing_cols <- setdiff(bundle$feature_cols, names(feats))
-  if (length(missing_cols) > 0) {
-    stop("Extracted features are missing columns the model expects: ",
-         paste(missing_cols, collapse = ", "),
-         " -- was this model trained with a different whatsappaudioR version?")
+  if (n_used == 0) {
+    return(list(
+      top_classes = character(0), confidences = numeric(0),
+      low_confidence = TRUE, gated_silent = TRUE,
+      n_windows_used = 0L, n_windows_total = n_total,
+      all_probabilities = stats::setNames(numeric(0), character(0))
+    ))
   }
 
-  prob_matrix <- predict(bundle$model, feats[, bundle$feature_cols, drop = FALSE], type = "prob")
-  probs <- prob_matrix[1, ]
+  prob_rows <- lapply(windows[keep], function(w) {
+    win_wave <- tuneR::Wave(left = as.integer(w), samp.rate = wave@samp.rate, bit = 16)
+    feats <- whatsappaudioR::wa_features(win_wave)
+
+    missing_cols <- setdiff(bundle$feature_cols, names(feats))
+    if (length(missing_cols) > 0) {
+      stop("Extracted features are missing columns the model expects: ",
+           paste(missing_cols, collapse = ", "),
+           " -- was this model trained with a different whatsappaudioR version?")
+    }
+    predict(bundle$model, feats[, bundle$feature_cols, drop = FALSE], type = "prob")[1, ]
+  })
+
+  probs <- colMeans(do.call(rbind, prob_rows))
   probs <- sort(probs, decreasing = TRUE)
 
   top_n <- min(3, length(probs))
@@ -75,6 +110,8 @@ predict_pest <- function(file_path, model_path = MODEL_PATH, threshold = LOW_CON
     top_classes = names(top),
     confidences = unname(top),
     low_confidence = unname(top[1]) < threshold,
+    gated_silent = FALSE,
+    n_windows_used = n_used, n_windows_total = n_total,
     all_probabilities = probs
   )
 }
@@ -83,6 +120,12 @@ predict_pest <- function(file_path, model_path = MODEL_PATH, threshold = LOW_CON
 #' text described in the brief: a confidence score, never a bare alarm, with
 #' an explicit low-confidence path.
 format_reply <- function(result) {
+  if (isTRUE(result$gated_silent)) {
+    return(paste0(
+      "That recording was too quiet for us to find any signal in it. ",
+      "Please resend a louder or longer recording (15-30s) from closer to the source."
+    ))
+  }
   if (isTRUE(result$low_confidence)) {
     return(paste0(
       "No confident match (top guess: ", result$top_classes[1], " at ",

@@ -8,14 +8,20 @@
    (with `libopus`) to decode to PCM.
 3. **Validate.** Reject non-audio attachments and clips under 3 seconds,
    with an explicit farmer-facing message for each (never a silent failure).
-4. **Feature extraction.** `whatsappaudioR::wa_features()` computes a
-   documented, inspectable feature vector: peak frequency, spectral
-   centroid, flatness, entropy, rolloff85, dominant-frequency stability, a
-   harmonic-energy heuristic, and 12 MFCCs.
+4. **Window, gate, extract features.** `R/06_predict.R` splits the incoming
+   clip into the same 2-second windows training data is built from,
+   drops any window too quiet relative to the clip's own loudest moment
+   (`gate_silent_windows()`, R/utils.R -- see below), then runs
+   `whatsappaudioR::wa_features()` on each surviving window: peak
+   frequency, spectral centroid, flatness, entropy, rolloff85,
+   dominant-frequency stability, a harmonic-energy heuristic, and 12 MFCCs.
 5. **Classify.** `R/06_predict.R` loads `models/classifier.rds` (a random
-   forest trained by `R/05_train.R`) and returns the top-3 classes with
-   confidence scores and an explicit `low_confidence` flag below a tunable
-   threshold (0.4 by default).
+   forest trained by `R/05_train.R`), predicts a class-probability vector
+   per surviving window, and averages them into one final call: top-3
+   classes, confidence scores, and an explicit `low_confidence` flag below
+   a tunable threshold (0.4 by default). If every window in the clip was
+   gated (no signal anywhere in the recording), returns `gated_silent =
+   TRUE` instead of guessing on noise.
 6. **Log.** Every request is logged to `logs/requests.jsonl` with its audio
    hash, outcome, and (on success) top classes/confidences -- for debugging
    and for the dashboard's replay mode.
@@ -127,19 +133,26 @@ encoder.
 Real numbers from an actual train/test run on **real Orthoptera/Cicadidae
 audio vs. real ESC-50 ambient audio**, both passed through the same
 WhatsApp compression simulation (`docs/classifier_results.md`, regenerated
-fresh by `R/05_train.R`): 109 source files (up from an initial 40 after a
-deeper download pass), 1251 windows, split 61 train / 19 val / 23 test
-source files.
+fresh by `R/05_train.R`): 109 source files, split 61 train / 19 val / 23
+test source files on the default seed, after an energy gate (below) drops
+near-silent windows.
 
-- **86.9% overall test accuracy. 8.7% false-positive rate against real
-  ambient audio** -- roughly 1 in 11 true-ambient test windows would
-  trigger a false pest alert.
-- *C. brunneus* separates cleanly (precision 0.991, recall 0.917).
-  *C. biguttulus* is weaker (precision 0.667, recall 0.875), confused
-  mainly with *C. brunneus* -- the two congeneric grasshoppers are not
-  cleanly separable by the current feature set, only distinguishable from
-  coarser categories. *Cicada orni* has low recall (0.462, often read as
-  ambient) but perfect precision (1.000).
+- **88.5% overall test accuracy on the default seed.** *C. brunneus*
+  separates cleanly; *C. biguttulus* is confused mainly with *C. brunneus*
+  (the two congeneric grasshoppers are not cleanly separable by the
+  current feature set); *Cicada orni*'s recall is the weakest of the three
+  real classes. See `docs/classifier_results.md` for the full confusion
+  matrix and precision/recall table for this specific seed.
+- **This single-seed number is NOT a stable estimate -- see the next
+  section.** Prompt 7 found that re-splitting this same data with
+  different random seeds swings overall test accuracy from roughly 10% to
+  92%, because only 4-5 source recordings back each real target species,
+  and a handful of those recordings are far longer than the others. Read
+  `docs/compression_delta.md`'s per-class recall table and its "why
+  per-arm accuracy swings so much" section before treating 88.5% as
+  precise-to-the-decimal ground truth for this classifier's real-world
+  performance -- it is one honestly-reported draw from a wide distribution,
+  not a converged estimate.
 - Chewing-sound classes are **deliberately excluded** from this classifier
   (a documented judgement call, not an oversight): the codec experiment
   already answers the chewing question at the signal level more directly,
@@ -160,45 +173,107 @@ ambient noise"; it had not been tested on that question. It is retained in
 `PROGRESS.md`'s history, clearly labelled as a trivial-separation artifact,
 for anyone auditing how the project's own numbers evolved.
 
-**Sample-size caveat:** some classes have as few as 1-2 test source
-recordings. Treat 86.9%/8.7% as real and meaningfully harder than the
-synthetic-vs-real number, not as precise-to-the-decimal ground truth.
+**Source-recording counts per real target class (the number that actually
+bounds every claim above):** *C. biguttulus* 5, *C. brunneus* 5, *Cicada
+orni* 5, ambient 69. A competent judge will ask about this before anything
+else -- see `docs/compression_delta.md` for how directly it explains the
+instability above.
 
-## The compression delta (the single most interesting number this project produces)
+## Near-silent windows are gated, not kept and mislabelled
 
-`R/07_compression_delta.R` trains and evaluates a second model on the
-*same* source recordings and the *same* grouped train/val/test split,
-differing only in whether the audio went through WhatsApp's Opus/Ogg
-compression before feature extraction. **Result: 86.9% (compressed) vs.
-86.6% (uncompressed) test accuracy -- a -0.4% delta, i.e. no detectable
-accuracy cost from using WhatsApp as the transport**, for these classes,
-on this classifier.
+A 2-second training window inherits its whole source recording's label
+regardless of whether that specific window actually contains any of the
+source's signal -- a long recording with quiet gaps between call bouts
+produces windows that are technically correctly labelled but acoustically
+empty. `R/utils.R`'s `gate_silent_windows()` drops any window more than
+`ENERGY_GATE_DB` (-35dB) quieter than the loudest window from the **same**
+source recording, applied identically during training
+(`R/03_preprocess.R`) and at inference (`R/06_predict.R` now windows and
+gates an incoming voice note the same way, rather than treating the whole
+clip as one feature vector -- see below). Deliberately relative to each
+recording's own peak, not an absolute loudness floor: an absolute-dBFS
+threshold would have unfairly gated whole real species classes, since some
+real recordings in this corpus (e.g. several *C. biguttulus*/*C. brunneus*
+files) were captured at low gain and have an absolute median window RMS
+below -60dBFS despite containing real signal throughout. Calibrated
+empirically against the existing corpus (see `PROGRESS.md`) rather than
+picked arbitrarily -- at -35dB relative, it drops ~2% of windows
+project-wide, concentrated almost entirely in the one long recording
+responsible for the `harmonic_energy_ratio` NA confound below.
 
-**This number was wrong by a wide margin on the first attempt, and getting
-it right required finding and fixing a real bug, not just reporting
-whatever came out.** The first run showed a striking -15.9% delta
-(uncompressed at only 71.0%), which turned out to be an artifact:
-`wa_features()`'s `harmonic_energy_ratio` returned `NA` for any window with
-no well-defined peak frequency (near-silent windows), silently dropping
-those windows from `complete.cases()`-based training/evaluation filters.
-Two long real recordings had far more such windows in the uncompressed
-condition specifically -- genuine silence stays silent in uncompressed
-audio, while WhatsApp's own lossy noise-shaping incidentally raises the
-noise floor just enough to avoid a literal zero-Hz peak in the compressed
-version. Net effect: the uncompressed model's test accuracy was computed
-on 100 usable windows out of ~217, versus 221 of ~222 for compressed -- not
-a fair comparison, just very different amounts of usable data. Fixed
-`harmonic_energy_ratio` to return 0 (a legitimate "no measurable harmonic
-structure" value, not "unknown") in `pkg/whatsappaudioR/R/wa_features.R`,
-added a regression test, and re-ran: the delta collapsed to -0.4%. Full
-account in `docs/compression_delta.md`.
+**This also resolved a previously-unexplained feature-extraction failure.**
+19 of 1251 windows used to fail feature extraction outright (a
+`missing value where TRUE/FALSE needed` error inside `wa_features()`'s
+spectral-property code). Root-caused: every one of those 19 windows is
+independently flagged as near-silent by the same gate -- same underlying
+cause as the `harmonic_energy_ratio` confound below (degenerate spectra
+from near-empty audio break more than one downstream calculation, not
+just the one already fixed). The gate removes these windows before
+feature extraction is attempted, so the failure no longer occurs (0 of
+1225/1224/1224 windows failed across all three arms in the current run).
 
-**What this does and doesn't say:** consistent with, and adding a
-classifier-level data point to, the codec experiment's finding that real
-Orthoptera stridulation survives the compression well. Does **not** extend
-to chewing-sound classes (excluded from this comparison) or to any
-condition not covered by the classifier above (field noise, distance,
-phone microphone variability, species outside the trained set).
+**Inference-time consequence:** if an entire incoming voice note is gated
+(uniformly near its own noise floor -- e.g. background silence, a muted
+recording), `predict_pest()` returns `gated_silent = TRUE` rather than
+guessing on noise, and the webhook routes this through the existing
+low-confidence reply path with a message asking for a louder or longer
+recording -- not an error, and not a spurious class guess.
+
+## The compression delta: codec damage vs. total transport cost
+
+**Prompt 7 found the original single-seed, single-condition version of
+this analysis was not yet a reportable number, for three separate reasons
+-- all now fixed. Full numbers, methodology, and the "why" behind each
+one live in `docs/compression_delta.md`, regenerated fresh by
+`R/07_compression_delta.R`; summarised here, not restated in full, so the
+two documents can't drift apart.**
+
+1. **"Uncompressed" was ambiguous.** The original uncompressed arm
+   resampled to WhatsApp's own 16kHz sample rate and skipped only the Opus
+   round-trip -- it isolated codec quantization damage with bandwidth held
+   constant, and said nothing about the bandwidth WhatsApp's 16kHz sample
+   rate itself discards (the same 8kHz ceiling `docs/codec_findings.md`
+   already establishes destroys content above it). The original "-0.4%,
+   no cost from using WhatsApp as the transport" framing overstated what
+   had actually been measured. Now built as two separate, clearly-named
+   controls: **codec-only** (still 16kHz, no Opus) and **full-fidelity**
+   (resampled to a common 48kHz, no Opus -- the raw-upload-path
+   comparison). The gap between the two deltas decomposes total transport
+   cost into a codec component and a bandwidth component.
+2. **A bare point estimate is indefensible at this sample size.** Only
+   4-5 source recordings back each real target class, and their durations
+   vary enormously, so which seed a single train/val/test split happens to
+   use can swing overall test accuracy from roughly 10% to 92% on its own
+   -- almost independent of anything the classifier is actually good or
+   bad at (a handful of unusually long recordings can each become 60-90%
+   of an entire test split if they land there). `R/07_compression_delta.R`
+   now runs 50 different grouped-split seeds for every arm and reports the
+   full seed distribution, not one draw from it.
+3. **Near-silent windows were mislabelled data**, addressed by the energy
+   gate above, applied identically to every arm.
+
+**Result (mean across 50 seeds): compressed 56.8%, codec-only 55.3%,
+full-fidelity 55.7% -- codec-only delta -1.4% (95% seed range -9.6% to
++6.4%), full-fidelity delta -1.1% (95% seed range -13.4% to +9.4%).**
+**Both deltas are indistinguishable from zero at this sample size** -- a
+different, weaker claim than "compression is free," and a materially more
+honest one than the original single-seed "-0.4%" framing. The paired
+per-seed delta is far more stable than either arm's raw accuracy (delta SD
+~4.5-6.4 points vs. ~25-27 points for raw per-arm accuracy) because the
+same lucky-or-unlucky long recording lands in the same split position for
+all three arms on a given seed and cancels out of the difference -- which
+is exactly why the delta, not raw accuracy, is the number to trust here.
+
+**What this does and doesn't say:** compatible with, and not contradicting,
+the codec experiment's signal-level finding that real Orthoptera
+stridulation survives the compression well -- but at this sample size
+neither delta can be shown to be non-zero with a precision better than
+roughly +/-10 percentage points. What would actually narrow this is more
+distinct source recordings per target species, not more re-splitting or
+re-windowing of the same ~5 files. Does **not** extend to chewing-sound
+classes (excluded from this comparison) or to any condition not covered by
+the classifier above (field noise, distance, phone microphone variability,
+species outside the trained set).
 
 ## The chewing-sound / Fall Armyworm scope decision
 
@@ -243,9 +318,17 @@ in this project.
 - **Untested in real field-noise conditions.** ESC-50 is curated
   environmental audio, not real farm-at-night background noise at unknown
   distance through a real phone microphone.
-- **Small sample sizes throughout.** Some classifier classes have as few
-  as 1-2 test source recordings; treat all precision/recall/accuracy
-  figures as real but noisy, not precise ground truth.
+- **Small sample sizes throughout, quantified, not just asserted.** Each
+  real target class has only 4-5 distinct source recordings. Prompt 7's
+  50-seed re-split analysis (`docs/compression_delta.md`) shows exactly
+  what that costs: overall test accuracy on this classifier swings from
+  roughly 10% to 92% depending only on which seed is used, and the
+  compression deltas are not distinguishable from zero at a precision
+  better than about +/-10 percentage points. Treat any single-seed
+  accuracy/precision/recall figure in this project (including the 88.5%
+  headline above) as one honest draw from that wide distribution, not a
+  converged estimate -- more source recordings per class is what would
+  actually narrow it, not more re-splitting of the same ~5 files.
 - **Single-microphone, no localisation.** The system identifies *what*
   might be present, not *where* on the farm, and cannot estimate distance
   or direction.

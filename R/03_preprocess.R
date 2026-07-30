@@ -35,9 +35,11 @@ SYNTHETIC_DIR      <- file.path("data", "codec_experiment", "reference")
 PROCESSED_DIR      <- file.path("data", "processed")
 WINDOWS_MANIFEST   <- file.path(PROCESSED_DIR, "windows_manifest.csv")
 
-WINDOW_SECONDS <- 2.0
-HOP_SECONDS    <- 1.0
-SILENCE_THRESHOLD_DB <- -35
+# WINDOW_SECONDS, HOP_SECONDS, SILENCE_THRESHOLD_DB, ENERGY_GATE_DB,
+# trim_silence(), window_signal(), gate_silent_windows() all live in
+# R/utils.R now (Prompt 7) so R/06_predict.R can window/gate an incoming
+# voice note identically to how training data is windowed/gated here --
+# "same window population" between train and serve.
 
 # Synthetic classes that exist purely to ground-truth-check the codec
 # simulation (Deliverable A), not to represent a pest/ambient class -- these
@@ -160,152 +162,141 @@ collect_labeled_sources <- function() {
   do.call(rbind, rows)
 }
 
-# ---- Silence trimming -------------------------------------------------------
-
-#' Trim leading/trailing near-silence via a simple frame-RMS threshold
-#' (relative to the clip's own peak frame). Not a sophisticated VAD -- just
-#' enough to drop dead air at the edges of a field recording. If every frame
-#' falls below threshold (e.g. a very quiet or already-short clip), returns
-#' the signal unchanged rather than emptying it.
-trim_silence <- function(x, sr, threshold_db = SILENCE_THRESHOLD_DB, frame_ms = 20) {
-  frame_len <- max(1, round(sr * frame_ms / 1000))
-  n_frames <- floor(length(x) / frame_len)
-  if (n_frames < 2) return(x)
-
-  rms <- vapply(seq_len(n_frames), function(i) {
-    seg <- x[((i - 1) * frame_len + 1):(i * frame_len)]
-    sqrt(mean(seg^2))
-  }, numeric(1))
-
-  peak_rms <- max(rms, na.rm = TRUE)
-  if (peak_rms <= 0) return(x)
-  rms_db <- 20 * log10(pmax(rms, 1e-8) / peak_rms)
-
-  active <- which(rms_db > threshold_db)
-  if (length(active) == 0) return(x)
-
-  start <- (min(active) - 1) * frame_len + 1
-  end <- min(length(x), max(active) * frame_len)
-  x[start:end]
-}
-
-# ---- Windowing ---------------------------------------------------------------
-
-#' Split a signal into fixed-length windows (zero-padding the tail, and the
-#' whole clip if it's shorter than one window).
-window_signal <- function(x, sr, window_s = WINDOW_SECONDS, hop_s = HOP_SECONDS) {
-  window_len <- round(window_s * sr)
-  hop_len <- round(hop_s * sr)
-
-  if (length(x) <= window_len) {
-    return(list(c(x, rep(0, window_len - length(x)))))
-  }
-
-  starts <- seq(1, length(x) - window_len + 1, by = hop_len)
-  last_start <- length(x) - window_len + 1
-  if (length(starts) == 0 || utils::tail(starts, 1) < last_start) {
-    starts <- c(starts, last_start)
-  }
-  lapply(unique(starts), function(s) x[s:(s + window_len - 1)])
-}
-
 # ---- Main per-file pipeline ---------------------------------------------------
 
-#' Resample/downmix to WhatsApp's sample rate via ffmpeg WITHOUT the Opus
-#' round-trip -- i.e. the "uncompressed" condition for the compressed-vs-
-#' uncompressed comparison (R/07_compression_delta.R). Sample rate is kept
-#' matched to the compressed condition deliberately, so the *only*
-#' difference between the two conditions is the lossy codec itself, not a
-#' confounding sample-rate change.
+#' Resample/downmix via ffmpeg WITHOUT the Opus round-trip -- the two
+#' "uncompressed" control conditions for R/07_compression_delta.R.
+#'
+#' @param sample_rate WHATSAPP_SAMPLE_RATE (16kHz) isolates codec-quantization
+#'   damage only, bandwidth held constant vs. the compressed arm ("codec-only"
+#'   control). FULL_FIDELITY_SAMPLE_RATE (48kHz) additionally restores the
+#'   bandwidth WhatsApp's 16kHz sample rate discards ("full-fidelity" control,
+#'   i.e. the raw-upload-path comparison). Explicit `pcm_s16le` output format
+#'   so bit depth stays identical across every arm -- otherwise RMS-dBFS-based
+#'   energy gating (gate_silent_windows(), R/utils.R) would not be comparable
+#'   between conditions.
 resample_mono_only <- function(input_path, output_wav, sample_rate = WHATSAPP_SAMPLE_RATE) {
   ffmpeg_bin <- Sys.which("ffmpeg")
   if (ffmpeg_bin == "") stop("ffmpeg not found on PATH")
   ensure_dir(dirname(output_wav))
   status <- system2(ffmpeg_bin, args = c("-y", "-loglevel", "error", "-i", input_path,
-                                          "-ar", as.character(sample_rate), "-ac", "1", output_wav))
+                                          "-ar", as.character(sample_rate), "-ac", "1",
+                                          "-c:a", "pcm_s16le", output_wav))
   if (status != 0) stop("ffmpeg failed to resample ", input_path)
   invisible(output_wav)
 }
 
-#' Process one source file end to end: read -> compress (WhatsApp sim, or
-#' just resample if apply_compression = FALSE) -> trim silence -> window ->
-#' write each window as its own WAV. Returns a data frame of manifest rows
-#' for the windows it wrote (zero rows if the file couldn't be processed,
-#' logged rather than raised).
+#' Process one source file end to end: read -> degrade (WhatsApp sim, or one
+#' of the two uncompressed controls, per `mode`) -> trim silence -> window ->
+#' gate near-silent windows -> write each surviving window as its own WAV.
+#'
+#' @param mode "compressed" (default pipeline: full WhatsApp Opus/Ogg
+#'   simulation), "codec_only" (resampled to WHATSAPP_SAMPLE_RATE, no Opus --
+#'   isolates codec damage), or "full_fidelity" (resampled to
+#'   FULL_FIDELITY_SAMPLE_RATE, no Opus -- isolates total transport cost
+#'   including bandwidth). See R/utils.R for why these are two different
+#'   questions (Prompt 7, Issue 1).
+#'
+#' @return A list: `manifest` (data frame of window rows written; zero rows
+#'   if the file couldn't be processed, logged rather than raised) and
+#'   `n_windows_before_gate`/`n_windows_after_gate` (energy-gate bookkeeping,
+#'   Prompt 7 Issue 3 -- so R/07_compression_delta.R can report how many
+#'   windows each arm lost and confirm the counts stay comparable).
 process_one_file <- function(path, label, subcategory, data_origin,
-                              apply_compression = TRUE, processed_dir = PROCESSED_DIR) {
+                              mode = c("compressed", "codec_only", "full_fidelity"),
+                              processed_dir = PROCESSED_DIR) {
+  mode <- match.arg(mode)
+  empty_manifest <- function() data.frame(
+    path = character(), label = character(), subcategory = character(),
+    data_origin = character(), source_file = character(),
+    window_index = integer(), duration_s = numeric(), stringsAsFactors = FALSE
+  )
+
   result <- tryCatch({
-    # Both simulate_whatsapp_compression() and resample_mono_only() shell
-    # out to ffmpeg with `-i path`, which is format-agnostic (mp3/ogg/wav/
-    # ...), so there's no need to read the original file in R first -- and
-    # for .mp3 sources, tuneR::readWave() would fail outright since it only
-    # parses WAV.
+    # simulate_whatsapp_compression() and resample_mono_only() both shell out
+    # to ffmpeg with `-i path`, which is format-agnostic (mp3/ogg/wav/...), so
+    # there's no need to read the original file in R first -- and for .mp3
+    # sources, tuneR::readWave() would fail outright since it only parses WAV.
     tmp_degraded <- tempfile(fileext = ".wav")
     on.exit(unlink(tmp_degraded), add = TRUE)
-    if (apply_compression) {
+    if (mode == "compressed") {
       simulate_whatsapp_compression(path, tmp_degraded)
+    } else if (mode == "codec_only") {
+      resample_mono_only(path, tmp_degraded, sample_rate = WHATSAPP_SAMPLE_RATE)
     } else {
-      resample_mono_only(path, tmp_degraded)
+      resample_mono_only(path, tmp_degraded, sample_rate = FULL_FIDELITY_SAMPLE_RATE)
     }
     degraded <- tuneR::readWave(tmp_degraded)
 
     windows <- window_signal(trim_silence(degraded@left, degraded@samp.rate), degraded@samp.rate)
+    keep <- gate_silent_windows(windows)
+    n_before <- length(windows)
+    n_after <- sum(keep)
+    windows <- windows[keep]
 
     stem <- tools::file_path_sans_ext(basename(path))
     out_dir <- file.path(processed_dir, label)
     ensure_dir(out_dir)
 
     manifest_rows <- vector("list", length(windows))
+    kept_original_indices <- which(keep)
     for (i in seq_along(windows)) {
-      out_path <- file.path(out_dir, sprintf("%s__win%02d.wav", stem, i))
+      out_path <- file.path(out_dir, sprintf("%s__win%02d.wav", stem, kept_original_indices[i]))
       out_wave <- tuneR::Wave(left = as.integer(windows[[i]]), samp.rate = degraded@samp.rate, bit = 16)
       tuneR::writeWave(out_wave, out_path)
       manifest_rows[[i]] <- data.frame(
         path = out_path, label = label, subcategory = subcategory,
-        data_origin = data_origin, source_file = path, window_index = i,
+        data_origin = data_origin, source_file = path, window_index = kept_original_indices[i],
         duration_s = length(windows[[i]]) / degraded@samp.rate,
         stringsAsFactors = FALSE
       )
     }
-    do.call(rbind, manifest_rows)
+    list(manifest = if (length(manifest_rows) == 0) empty_manifest() else do.call(rbind, manifest_rows),
+         n_windows_before_gate = n_before, n_windows_after_gate = n_after)
   }, error = function(e) {
     message("Failed to process ", path, ": ", conditionMessage(e))
     NULL
   })
 
   if (is.null(result)) {
-    data.frame(path = character(), label = character(), subcategory = character(),
-               data_origin = character(), source_file = character(),
-               window_index = integer(), duration_s = numeric(),
-               stringsAsFactors = FALSE)
+    list(manifest = empty_manifest(), n_windows_before_gate = 0L, n_windows_after_gate = 0L)
   } else {
     result
   }
 }
 
-#' @param apply_compression When FALSE, produces the "uncompressed" condition
-#'   for R/07_compression_delta.R (resampled to the same 16kHz mono, but no
-#'   Opus round-trip) -- otherwise identical to the normal (compressed)
-#'   pipeline. Always TRUE for the default `Rscript R/03_preprocess.R`
-#'   invocation; the delta script calls this function directly with FALSE.
-main <- function(apply_compression = TRUE, processed_dir = PROCESSED_DIR,
+#' @param mode See process_one_file(). Always "compressed" for the default
+#'   `Rscript R/03_preprocess.R` invocation; R/07_compression_delta.R calls
+#'   this function directly with "codec_only" / "full_fidelity".
+main <- function(mode = c("compressed", "codec_only", "full_fidelity"),
+                  processed_dir = PROCESSED_DIR,
                   windows_manifest_path = WINDOWS_MANIFEST) {
+  mode <- match.arg(mode)
   sources <- collect_labeled_sources()
   message("Preprocessing ", nrow(sources), " source files across ",
           length(unique(sources$label)), " labels: ",
           paste(unique(sources$label), collapse = ", "),
-          if (!apply_compression) " (UNCOMPRESSED condition)" else "")
+          if (mode != "compressed") paste0(" (", toupper(mode), " condition)") else "")
 
-  all_windows <- do.call(rbind, lapply(seq_len(nrow(sources)), function(i) {
+  per_file <- lapply(seq_len(nrow(sources)), function(i) {
     process_one_file(sources$path[i], sources$label[i], sources$subcategory[i], sources$data_origin[i],
-                      apply_compression = apply_compression, processed_dir = processed_dir)
-  }))
+                      mode = mode, processed_dir = processed_dir)
+  })
+
+  all_windows <- do.call(rbind, lapply(per_file, `[[`, "manifest"))
+  n_before_gate <- sum(vapply(per_file, `[[`, integer(1), "n_windows_before_gate"))
+  n_after_gate <- sum(vapply(per_file, `[[`, integer(1), "n_windows_after_gate"))
 
   ensure_dir(processed_dir)
   utils::write.csv(all_windows, windows_manifest_path, row.names = FALSE)
 
   message("Wrote ", nrow(all_windows), " windows from ", nrow(sources),
           " source files to ", processed_dir, ". Manifest: ", windows_manifest_path)
+  message("Energy gate (", ENERGY_GATE_DB, "dB relative to each recording's own peak window): ",
+          n_before_gate - n_after_gate, " of ", n_before_gate, " windows dropped as near-silent.")
+
+  attr(all_windows, "n_windows_before_gate") <- n_before_gate
+  attr(all_windows, "n_windows_after_gate") <- n_after_gate
   invisible(all_windows)
 }
 

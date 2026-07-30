@@ -171,7 +171,19 @@ write_classifier_results <- function(conf_mat, prec_recall, fpr_ambient, class_c
     "",
     "TBD -- fill in after reading the numbers above. If performance is poor ",
     "for any class (especially a target pest), say so plainly -- do not ",
-    "retune thresholds until the numbers look better before reporting them."
+    "retune thresholds until the numbers look better before reporting them.",
+    "",
+    "**Sample-size caveat (Prompt 7, always true of this corpus, not just ",
+    "this run):** each real target class has only 4-5 distinct source ",
+    "recordings, of very different durations. Re-splitting this same data ",
+    "50 different random ways (`R/07_compression_delta.R`, ",
+    "`docs/compression_delta.md`) swings overall test accuracy from roughly ",
+    "10% to 92% -- almost entirely because a handful of unusually long ",
+    "recordings can each become most of a test split if they land there, ",
+    "not because of anything the model is actually good or bad at. Treat ",
+    "the single-seed accuracy above as one honest draw from that wide ",
+    "distribution, not a converged estimate of this classifier's real ",
+    "performance."
   )
 
   writeLines(lines, results_path)
@@ -206,10 +218,16 @@ train_and_evaluate <- function(features_df) {
 
   # Drop rows with any non-finite feature values (e.g. a failed dominant-freq
   # contour on a very short/silent window) rather than letting them silently
-  # corrupt training -- log how many were dropped.
+  # corrupt training -- log how many were dropped, on BOTH train and test
+  # sides. This asymmetry (previously only logged for train) is exactly what
+  # produced the original -15.9% compression-delta confound: the uncompressed
+  # test split was silently shrinking far more than the compressed one, and
+  # nothing surfaced that until it was investigated by hand. See
+  # R/07_compression_delta.R's invariant assertions, which now check this
+  # automatically (Prompt 7).
   complete_train <- train_df[stats::complete.cases(train_df[, feature_cols]), ]
-  n_dropped <- nrow(train_df) - nrow(complete_train)
-  if (n_dropped > 0) message(n_dropped, " training rows dropped for non-finite features.")
+  n_train_dropped <- nrow(train_df) - nrow(complete_train)
+  if (n_train_dropped > 0) message(n_train_dropped, " training rows dropped for non-finite features.")
 
   model <- randomForest::randomForest(
     x = complete_train[, feature_cols],
@@ -218,6 +236,8 @@ train_and_evaluate <- function(features_df) {
   )
 
   complete_test <- test_df[stats::complete.cases(test_df[, feature_cols]), ]
+  n_test_dropped <- nrow(test_df) - nrow(complete_test)
+  if (n_test_dropped > 0) message(n_test_dropped, " test rows dropped for non-finite features.")
   predicted <- predict(model, complete_test[, feature_cols])
   actual <- droplevels(complete_test$label)
 
@@ -244,7 +264,16 @@ train_and_evaluate <- function(features_df) {
     class_counts = {
       cc <- as.data.frame(table(label = features_df$label, data_origin = features_df$data_origin))
       cc[cc$Freq > 0, ]
-    }
+    },
+    # Bookkeeping for R/07_compression_delta.R's invariant assertions
+    # (Prompt 7) -- lets it check the fraction of rows dropped for
+    # non-finite features stays comparable across arms, rather than only
+    # discovering a divergence (as happened before) by hand.
+    n_train_raw = nrow(train_df), n_train_complete = nrow(complete_train),
+    n_test_raw = nrow(test_df), n_test_complete = nrow(complete_test),
+    train_class_levels = sort(unique(as.character(complete_train$label))),
+    test_class_levels = sort(unique(as.character(actual))),
+    source_files = unique(features_df$source_file)
   )
 }
 

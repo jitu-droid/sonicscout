@@ -605,3 +605,119 @@ tradeoff to report: the model never cries wolf on real ambient sound, at
 the cost of missing the hardest, noisiest pest signal variant. This is
 exactly the kind of result the brief said to report plainly rather than
 tune away.
+
+---
+
+## What we can and cannot claim (Prompt 5, Step 6)
+
+### 1. Claims fully supported by real-audio measurement
+
+- **Real Orthoptera stridulation survives WhatsApp's 16kHz/16kbps Opus
+  compression well.** Measured directly on real iNaturalist recordings of
+  *Chorthippus biguttulus* (survivability 0.986) and *Chorthippus brunneus*
+  (0.956), and real *Cicada orni* (0.972) -- all comfortably inside the
+  codec's surviving band. (`docs/codec_findings.md`)
+- **A classifier trained on real *Chorthippus*/*Cicada* audio vs. real
+  ESC-50 ambient audio achieves 86.9% test accuracy with an 8.7%
+  false-positive rate against real ambient.** *C. brunneus* separates
+  cleanly (precision 0.991); *C. biguttulus* and *Cicada orni* are weaker
+  and confuse with each other/ambient. (`docs/classifier_results.md`)
+- **WhatsApp's compression costs no measurable classifier accuracy for
+  these classes.** Compressed vs. uncompressed test accuracy: 86.9% vs.
+  86.6%, a -0.4% delta -- after fixing a real data-completeness bug that
+  initially made this look like -15.9%. (`docs/compression_delta.md`)
+- **The 8kHz Nyquist ceiling is real and unforgiving,** confirmed on both
+  a synthetic 10kHz control tone and, indirectly, on every species'
+  >8kHz retention column reading exactly 0.
+- **Real larval chewing/feeding sounds survive the codec poorly-to-
+  moderately, and this was measured under a best-case capture
+  condition, not a realistic one** -- every chewing recording used a
+  contact/vibration sensor (accelerometer, piezoelectric disk, PVDF film,
+  soil microphone), never an open-air microphone.
+
+### 2. Claims supported only by synthetic data
+
+- The original (Prompt 3) codec survivability numbers for
+  `synthetic_stridulation`, `synthetic_mosquito_wingbeat`, and
+  `synthetic_chewing_pulses` were measured on parametrically-generated
+  tones/pulse trains, not real insect audio. They're superseded by real
+  measurements for stridulation/cicada above, but remain the *only*
+  evidence for mosquito wingbeat specifically -- **no real mosquito
+  wingbeat recording has been obtained or tested.**
+  synthetic_tone_plus_noise (a stridulation tone + noise at various SNRs)
+  is likewise synthetic-only, and remains in the current classifier purely
+  as a low-SNR robustness comparison point, not as a real-pest class.
+- The classifier's `synthetic_*` classes remain in the training set
+  alongside the real classes for direct comparison, but any number
+  reported for them individually is a synthetic-signal result, not a
+  real-pest one.
+
+### 3. Claims that remain untested
+
+- **Field noise conditions.** Real ambient audio here is ESC-50 (curated
+  environmental recordings), not real farm-at-night background noise
+  (wind through crops, livestock at a real distance, insects other than
+  the specific ESC-50 "crickets" category, human conversation in a farm
+  setting).
+- **Farmer-recorded audio at actual distance, through an actual phone
+  microphone, actually sent via actual WhatsApp.** Every "real" recording
+  used here is a curated reference clip (iNaturalist/xeno-canto field
+  recordings, close-mic'd relative to a phone-at-distance scenario) run
+  through a *local simulation* of WhatsApp's compression -- the
+  `compare_real_vs_simulated()` round-trip check against a genuine
+  WhatsApp-exported `.opus` file has still never been run (no real
+  WhatsApp export has been provided at any point across this whole
+  project). The simulation is unverified against the real thing.
+- **Species outside the trained set.** 3 real species (2 grasshoppers, 1
+  cicada) plus untested-in-reality mosquito wingbeat. No coverage of any
+  other agriculturally significant pest.
+- **Phone microphone variability** (different phones, different mic
+  quality/AGC/noise suppression behaviour) -- everything measured used
+  clean reference-quality source recordings, not phone-microphone capture.
+- **The capture-method question for 3 of 5 chewing species** (*Diaprepes
+  abbreviatus*'s 3 files) -- the USDA source page didn't state a sensor
+  type for those specifically, though context (same lab, same
+  methodology) makes a contact sensor likely.
+- **Live Twilio round trip** -- the webhook is verified against a mock
+  payload and the real trained model, never against an actual WhatsApp
+  Sandbox message (needs Jitu's Twilio account, `BLOCKERS.md` #2).
+
+### 4. The single result to lead with on one slide
+
+**The compression delta: -0.4%, no detectable accuracy cost from using
+WhatsApp voice notes instead of raw audio, measured on real grasshopper/
+cicada recordings against real ambient noise.** Not the 86.9%
+accuracy figure alone (accuracy numbers invite "compared to what
+baseline?" questions this project can't fully answer yet given sample
+size), and not the codec survivability numbers alone (those are signal-
+level, one step removed from "does the actual pipeline work"). The
+compression delta is the one number that directly answers the project's
+own core novelty claim -- "the pipeline survives the compression" -- with
+an actual before/after comparison on a real trained classifier, not just
+a spectral argument. It's also the number this session found to be wrong
+by a wide margin on the first attempt (-15.9%) and *fixed*, which is a
+better story for a judge than a suspiciously clean result on the first
+try: it shows the number was actually checked, not just reported.
+
+### 5. The question you'd least want a judge to ask, and the most honest answer
+
+**"Have you tested this on a real WhatsApp voice note end-to-end -- not a
+local simulation, an actual phone, sent, received, and processed by
+Twilio?"**
+
+Honest answer: no. Every "real audio" claim in this project is real
+*source* audio (real recordings of real insects) run through a *local
+FFmpeg simulation* of WhatsApp's Opus/Ogg compression -- not a single
+genuine WhatsApp-exported voice note has been tested against that
+simulation at any point across this entire build, despite the manual
+procedure for doing exactly that
+(`compare_real_vs_simulated()` in `R/02_codec_experiment.R`) being
+written and ready since the very first session. If the local
+simulation's assumptions about WhatsApp's actual client-side encoder
+(codec version, VBR vs. CBR, any client-side noise suppression/AGC) are
+wrong in some way, every downstream number -- codec survivability,
+classifier accuracy, the compression delta -- inherits that gap. This is
+a completely fixable gap (it needs exactly one WhatsApp voice note sent
+from a real phone and exported with media), and the fact that it's still
+open after two full validation passes should be named directly rather
+than hoped nobody asks.

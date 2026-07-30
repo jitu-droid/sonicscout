@@ -57,12 +57,15 @@ Pipeline stages (`R/`), each independently runnable:
 | Script | Purpose |
 |---|---|
 | `00_synthetic_corpus.R` | Synthetic ground-truth audio (known frequencies/pests), unblocks everything below without needing real data |
-| `01_download_data.R` | Real data: ESC-50 ambient corpus + xeno-canto target-species clips, capped at 2GB, idempotent |
+| `01_download_data.R` | Real data: ESC-50 ambient corpus + real InsectSet459 recordings (fetched directly from their original source URLs), capped at 2GB, idempotent |
+| `fetch_chewing_sounds.R` | Real chewing/feeding-sound recordings (USDA-ARS), used only in the codec experiment -- see `docs/methodology.md` for why these are excluded from the classifier |
 | `02_codec_experiment.R` | **Deliverable A** -- measures what WhatsApp's Opus/Ogg compression actually does to pest signatures |
+| `prepare_real_reference.R` | Builds the codec experiment's real-audio reference set from the raw downloads above |
 | `03_preprocess.R` | Resample, trim silence, window, apply the WhatsApp compression simulation to training data (train/serve match) |
 | `04_features.R` | Extract the documented feature set via `whatsappaudioR` |
 | `05_train.R` | Train + evaluate a random forest, grouped by source recording |
 | `06_predict.R` | Single entry point: audio file in, top-3 classes + confidence + low-confidence flag out |
+| `07_compression_delta.R` | Trains a second model on uncompressed audio (same sources/split) to measure compression's actual accuracy cost |
 | `seed_demo_logs.R` | Seed the dashboard's replay mode with real `predict_pest()` output |
 
 ## Quickstart
@@ -78,20 +81,24 @@ install.packages(c("tuneR", "seewave", "warbleR", "dplyr", "tidyr", "purrr",
 install.packages("pkg/whatsappaudioR", repos = NULL, type = "source")
 ```
 
-You'll also need a system **FFmpeg** build with `libopus` support on `PATH`
-(`av::av_audio_convert()` segfaults on the reference machine this was built
-on -- see `BLOCKERS.md` -- so every decode/encode path shells out to system
-`ffmpeg` instead).
+You'll also need a system **FFmpeg** build with `libopus` support on `PATH`.
+Every decode/encode path shells out to system `ffmpeg` rather than using the
+`av` R package -- not because `av` is broken (an earlier note claiming it
+segfaults on this machine was re-tested and retracted, see `BLOCKERS.md`),
+but because the project was already built around a shell-out and there was
+no reason to add a dependency mid-build.
 
 ```bash
 # 3. Run the pipeline end to end (from the repo root)
-Rscript R/00_synthetic_corpus.R    # synthetic ground-truth corpus
-Rscript R/01_download_data.R       # real data (ESC-50 + xeno-canto attempt)
-Rscript R/02_codec_experiment.R    # Deliverable A: codec findings
+Rscript R/00_synthetic_corpus.R       # synthetic ground-truth corpus
+Rscript R/01_download_data.R          # real data: ESC-50 + real InsectSet459 recordings
+Rscript R/fetch_chewing_sounds.R      # real chewing/feeding sounds (codec experiment only)
+Rscript R/02_codec_experiment.R       # Deliverable A: codec findings
 Rscript R/03_preprocess.R
 Rscript R/04_features.R
-Rscript R/05_train.R               # trains models/classifier.rds
-Rscript R/seed_demo_logs.R         # seed dashboard replay mode
+Rscript R/05_train.R                  # trains models/classifier.rds
+Rscript R/07_compression_delta.R      # measures compression's actual accuracy cost
+Rscript R/seed_demo_logs.R            # seed dashboard replay mode
 
 # 4. Run the demo pieces
 Rscript -e "plumber::pr_run(plumber::pr('api/plumber.R'), port = 8000)"
@@ -109,16 +116,53 @@ CC0. Faiss, M. et al. (2025). *InsectSet459: an open dataset of insect
 sounds for bioacoustic machine learning*. arXiv:2503.15074; also published
 in *Scientific Data*. Zenodo: [10.5281/zenodo.18554693](https://zenodo.org/records/18554693).
 
-This dataset's own distribution (three ~16-51GB zips) is too large for this
-project's data-download budget; see `docs/methodology.md` for what data this
-build actually used instead (a synthetic ground-truth corpus + a scoped
-real subset from ESC-50 and xeno-canto directly).
+This dataset's own distribution (three 16-51GB zips) is too large for this
+project's 2GB data-download budget. `R/01_download_data.R` instead downloads
+only the dataset's small annotation CSV and fetches individual recordings
+directly from their original source URLs -- 59 real files across 3 species:
+***Chorthippus biguttulus***, ***Chorthippus brunneus*** (European field
+grasshoppers) and ***Cicada orni*** (Mediterranean cicada). **None of these
+are locusts.** This project's honest claim is "validated on Orthoptera
+stridulation using European grasshoppers as acoustic proxies" -- never
+"validated on locusts" -- since InsectSet459 contains no *Schistocerca* or
+*Locusta* at all. See `docs/methodology.md` for why these species were
+chosen and what that does and doesn't support.
+
+**USDA-ARS Reference Library of Digitized Insect Sounds** -- 15 real
+larval chewing/feeding recordings across 5 species (`R/fetch_chewing_sounds.R`),
+filling the gap that InsectSet459 has no Lepidoptera and therefore can't
+speak to Fall Armyworm at all. Presumed public domain (US federal
+government work, 17 U.S.C. sec 105). **Used only in the codec experiment,
+not the classifier** -- every one of these recordings was captured with a
+contact/vibration sensor (accelerometer, piezoelectric disk, PVDF film, or
+similar), never an open-air microphone, so results from this corpus are a
+best-case ceiling, not evidence of real-world WhatsApp-voice-note viability.
+See `docs/methodology.md` for the full reasoning and the chewing/Fall-Armyworm
+scope decision.
 
 **ESC-50** (ambient/negative class) -- Piczak, K. J. (2015). *ESC: Dataset
 for Environmental Sound Classification*. CC BY-NC 3.0.
 https://github.com/karolpiczak/ESC-50. Note the **NC** (non-commercial)
 term -- fine for this hackathon/research use, but would need revisiting
 before any commercial deployment.
+
+## Measured results (real audio, not estimates)
+
+- **Codec survivability:** real Orthoptera/Cicadidae stridulation survives
+  the WhatsApp Opus/Ogg round-trip well (0.956-0.986 across the 3 real
+  species). Real chewing-sound survivability is poor-to-moderate
+  (0.342-0.892) and was measured under best-case contact-sensor capture,
+  not realistic open-air conditions -- see `docs/codec_findings.md`.
+- **Classifier:** 86.9% overall test accuracy, 8.7% false-positive rate
+  against real ambient audio, trained/evaluated on real pest audio vs. real
+  ESC-50 ambient audio (109 source files, grouped train/val/test split) --
+  see `docs/classifier_results.md`.
+- **Compression cost:** -0.4% accuracy delta between WhatsApp-compressed
+  and uncompressed audio on the same classifier and split -- essentially no
+  detectable cost from using WhatsApp as the transport, for these classes
+  -- see `docs/compression_delta.md`.
+- None of the above has been tested against a genuine WhatsApp-exported
+  voice note end to end; see `docs/methodology.md`'s limitations section.
 
 ## Licence
 

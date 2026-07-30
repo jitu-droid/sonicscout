@@ -3,28 +3,31 @@
 Ordered most-urgent first. Each entry: what was tried, the exact error, what
 the fix is believed to be, and what Jitu specifically needs to do.
 
-## 1. No real pest audio yet (needs your judgement call)
+## 1. RESOLVED: real pest audio acquired -- xeno-canto's API was abandoned, not fixed
 
-**What was tried:** `R/01_download_data.R` queries xeno-canto's API for
-Desert Locust, Migratory Locust, and *Culex* mosquito recordings.
+**Original problem:** `R/01_download_data.R` queried xeno-canto's API for
+Desert Locust, Migratory Locust, and *Culex* mosquito recordings; all three
+queries returned `HTTP 404 Not Found` (xeno-canto's public API v2 has been
+deprecated in favour of v3, which requires a registered key).
 
-**Error:** All three queries return `HTTP 404 Not Found`. Most likely
-xeno-canto's public API v2 (used here) has been deprecated in favour of v3,
-which requires a registered API key.
+**Resolution:** per explicit instruction, the xeno-canto-API approach was
+abandoned rather than fixed -- not worth registering for a v3 key over.
+`R/01_download_data.R` was rewritten to download InsectSet459's small
+annotation CSV (instead of its 16-51GB distribution zips) and fetch
+individual recordings directly from their original source URLs (mostly
+`static.inaturalist.org`). This yielded **59 real recordings across 3
+species** (*Chorthippus biguttulus*, *Chorthippus brunneus*, *Cicada
+orni* -- Orthoptera/Cicadidae acoustic proxies for locust/grasshopper
+pests, not locusts themselves) plus 15 real chewing/feeding recordings
+from USDA-ARS (`R/fetch_chewing_sounds.R`) for the codec experiment.
+`docs/classifier_results.md` and `docs/codec_findings.md` are now real,
+measured numbers from this real audio, not synthetic-only. No real
+*Culex* mosquito recording has been obtained -- that class remains
+synthetic-only, flagged explicitly wherever it's cited.
 
-**Believed fix:** Register for an xeno-canto API v3 key and update the
-request in `R/01_download_data.R` to use it, or manually download a handful
-of recordings per species from xeno-canto.org and place them under
-`data/raw/xenocanto/<desert_locust|migratory_locust|culex_mosquito>/`.
-
-**What Jitu needs to do:** This is the single biggest gap in the current
-build -- every pest-class number in `docs/classifier_results.md` is
-trained/tested on a **synthetic** ground-truth corpus, not real insect
-recordings. Getting even a handful of real recordings per target species
-(via an xeno-canto API key or manual download) and re-running
-`R/01_download_data.R` -> `R/03_preprocess.R` -> `R/04_features.R` ->
-`R/05_train.R` would be the highest-value next step before presenting any
-performance number as representative of real pests.
+**What Jitu needs to do:** Nothing further for target-species real audio.
+If mosquito wingbeat detection matters for a future iteration, a real
+recording source for *Culex* (or another mosquito genus) is still needed.
 
 ## 2. Set up Twilio sandbox and run a live test (needs your Twilio account)
 

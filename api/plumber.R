@@ -39,6 +39,39 @@ REQUEST_LOG_PATH <- file.path(.repo_root, "logs", "requests.jsonl")
 REQUEST_AUDIO_DIR <- file.path(.repo_root, "logs", "audio")
 MODEL_PATH_ABS <- file.path(.repo_root, "models", "classifier.rds")
 
+# ---- Startup validation (Prompt 11, Part 2a) --------------------------------
+#
+# Runs at PARSE time (plumber::pr() sources this whole file before pr_run()
+# ever starts serving), not inside a request handler -- a misconfigured
+# deployment (missing Twilio credentials, no trained model) fails loudly
+# and immediately when the server is started, instead of appearing to boot
+# fine and only failing on the first real inbound message, which is a much
+# worse failure mode to discover live during a demo. Only checks presence
+# here (cheap, instant) -- whether the credentials are actually VALID
+# against Twilio's API is what R/11_twilio_smoke_test.R checks separately,
+# since that needs a network round trip and shouldn't block every server
+# start.
+validate_startup <- function() {
+  problems <- character(0)
+  if (Sys.getenv("TWILIO_ACCOUNT_SID") == "") {
+    problems <- c(problems, "TWILIO_ACCOUNT_SID is not set")
+  }
+  if (Sys.getenv("TWILIO_AUTH_TOKEN") == "") {
+    problems <- c(problems, "TWILIO_AUTH_TOKEN is not set")
+  }
+  if (!file.exists(MODEL_PATH_ABS)) {
+    problems <- c(problems, paste0("No trained model at ", MODEL_PATH_ABS,
+                                    " -- run R/05_train.R first"))
+  }
+  if (length(problems) > 0) {
+    stop("Startup validation failed -- fix before the server can run:\n  - ",
+         paste(problems, collapse = "\n  - "),
+         "\nSee .env.example and docs/twilio_setup.md.", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+validate_startup()
+
 # ---- Helpers ----------------------------------------------------------------
 
 xml_escape <- function(x) {

@@ -31,7 +31,33 @@ TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
 ```
 
-## 4. Expose the plumber API and point Twilio at it
+## 4. Smoke-test before going live
+
+Before standing up a tunnel and touching the real sandbox, run:
+
+```bash
+Rscript R/11_twilio_smoke_test.R
+```
+
+This checks, without needing an inbound message at all: that
+`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` load (from an already-exported
+environment or directly from `.env` in the repo root -- it loads `.env`
+itself, no extra step needed), that Twilio's API is reachable and these
+specific credentials are accepted (a real authenticated round trip to
+Twilio, not just "the variable is non-empty"), and whether the local
+webhook is already responding on `/health` (fine if it isn't yet -- you
+haven't started it). Fix anything it flags before continuing; a live
+phone test is a much slower way to discover a typo in an auth token.
+
+Separately, `api/plumber.R` itself now validates its own startup
+conditions (Prompt 11): it refuses to start at all -- fails immediately,
+not on the first real request -- if credentials are missing or
+`models/classifier.rds` doesn't exist. If `Rscript -e
+"plumber::pr_run(plumber::pr('api/plumber.R'), ...)"` errors out
+immediately with a "Startup validation failed" message, that error message
+itself says exactly what's missing.
+
+## 5. Expose the plumber API and point Twilio at it
 
 Twilio needs a public HTTPS URL to send webhooks to. For local development,
 use a tunnel (e.g. `ngrok http 8000` if running plumber on port 8000), then:
@@ -41,15 +67,45 @@ use a tunnel (e.g. `ngrok http 8000` if running plumber on port 8000), then:
    `https://<your-ngrok-subdomain>.ngrok.io/webhook` (or wherever
    `api/plumber.R`'s endpoint is mounted), method `POST`.
 
-## 5. Run the live test
+## 6. Run the live test
 
 1. Start the API: `Rscript -e "plumber::pr_run(plumber::pr('api/plumber.R'), port = 8000)"`.
+   If this errors immediately with "Startup validation failed", fix what
+   it names (see step 4) before continuing.
 2. Start the tunnel.
 3. Set the sandbox webhook URL as above.
 4. Send a real WhatsApp voice note (10-30s, recorded at night near a target
-   sound if possible) to the sandbox number from your joined phone.
+   sound if possible) to the sandbox number from your joined phone. Note
+   the send time so wall-clock latency (send -> reply received) can be
+   measured from the chat timestamps or `logs/requests.jsonl`'s own
+   timestamp against when the reply visibly arrives.
 5. Confirm: the reply arrives on WhatsApp with a pest ID + confidence, and a
-   new entry appears in `logs/`.
+   new entry appears in `logs/requests.jsonl` with the full path (media
+   retrieval, decode, prediction) reflected in its fields.
+
+## 7. Test the failure paths too, for real
+
+Send each of these to the sandbox number and confirm the reply matches
+what's expected -- these are all handled explicitly in `api/plumber.R`
+but have only ever been exercised by the mock test suite, not real Twilio
+payloads:
+
+1. **A text-only message** (no attachment) -- expect: "Please send a voice
+   note recording of the field (10-30 seconds)."
+2. **A very short voice note** (under 3 seconds) -- expect: a message
+   naming the actual duration and asking for at least 3 seconds.
+3. **A silent voice note** (record with the mic covered, or in total
+   silence) -- expect: either the low-confidence path, or (if every window
+   gets energy-gated) the "too quiet to find any signal" message -- not an
+   error and not a spurious species guess.
+4. **A non-audio attachment** (a photo, for instance) -- expect: "That
+   doesn't look like an audio file..."
+
+If any of these instead returns "Sorry, something went wrong..." or times
+out, that's a real bug the mock test suite didn't catch (mocked media
+downloads and synthetic test audio don't necessarily exercise every real
+WhatsApp encoding quirk) -- log it and fix it before treating the webhook
+as demo-ready.
 
 ## Known limitation
 

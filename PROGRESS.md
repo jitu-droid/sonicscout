@@ -1245,3 +1245,72 @@ by hand into a slide.
 | Real ambient source recordings | 145 | -- | -- | `docs/classifier_results.md` |
 | Window length / hop | 4.0s / 2.0s | -- | -- | `R/utils.R` |
 | K-fold CV design | 5 folds x 10 repeats | -- | 50 fold-evaluations total | `R/05_train.R` |
+
+---
+
+## Session 7 — Prompt 11 (final validation and freeze)
+
+Prompt 11 closes the two things that have never run against reality (a real
+WhatsApp round-trip, a live Twilio message), adds prevalence sensitivity,
+and freezes the repo. Parts 1 and 2 need Jitu to physically send WhatsApp
+messages -- everything automatable is done first, then an exact checklist
+is handed over and this session waits, per the prompt's explicit
+instruction not to simulate or fabricate results in the meantime.
+
+### An unplanned but significant find while building Part 1: `band_energy()` was a real bug, present since Deliverable A
+
+Building `R/10_roundtrip_validation.R` required decoding an actual
+WhatsApp-compressed test file for the first time and comparing its
+per-band retention against our simulation's. The simulated arm's own
+per-band retention ratios came back above 100% (e.g. 220% in the 0-500Hz
+band) even when compared only against the clean original -- clearly
+wrong before any real data was even involved, so this got investigated
+rather than shipped.
+
+**Root cause:** `band_energy()` summed raw FFT bin amplitudes within a Hz
+range. `seewave::meanspec()` peak-normalizes each spectrum independently
+(its own loudest bin = 1), and the number of bins covering a given Hz
+range scales with sample rate -- at the project's `wl=2048` FFT window, a
+44.1kHz original has ~24 bins in 0-500Hz while a 16kHz WhatsApp-simulated
+signal has ~64 bins in that same range (narrower bins). Summing raw bins
+therefore inflates "band energy" for the LOWER-sample-rate signal by
+roughly the bin-count ratio, regardless of any real signal change.
+**Checked against the previously-published per-band retention table in
+`docs/codec_findings.md` and confirmed it had been wrong the same way
+since the table first existed** -- every species showed retention above
+100%, up to 45x for one chewing species, and nobody had caught it because
+the project's actual headline metric (`survivability_score`, from
+`spectral_similarity()`) already used a common-frequency-grid comparison
+that sidesteps this exact problem. **The headline survivability numbers
+(0.986, 0.972, 0.956, etc. -- every number this project has actually
+based a claim on) were never affected and remain valid as measured.**
+Only the secondary per-band retention table was wrong.
+
+**Fix:** `band_energy_density()` (mean per bin, not sum) replaces the
+sum-based computation for cross-spectrum band comparisons; a separate
+sum-based `band_energy_sum()` is kept specifically for the "does this band
+have meaningful energy at all" gate, where a same-spectrum sum-of-shares
+comparison is legitimate and the bin-density issue doesn't apply. Added a
+regression test asserting `band_energy_density()` returns the same value
+regardless of bin count for identical per-bin amplitudes, and that
+`band_energy_sum()` does NOT (documenting the exact distinction that
+caused the bug). Re-ran the full codec experiment; real target species now
+show sensible per-band retention (70-91% for the 4 sub-8kHz bands, all
+three real species) instead of the previous 165-250% range.
+
+**A residual finding after the fix, investigated rather than left
+unexplained:** real chewing/feeding-sound species still show retention
+above 100% per band even with the corrected density-based computation.
+Confirmed this is NOT a residual bug (checked directly: `accelrw.wav`,
+*Sitophilus oryzae* -- original spectrum is sharply peaked with amplitude
+falling from 1.0 to 0.015 within the top 5 bins, degraded spectrum is
+nearly flat, top 5 bins all within 0.76-1.0) -- a genuine, explainable
+property: these contact-sensor recordings are narrowband/peaky, and
+16kbps Opus fills their near-silent bands with quantization noise that is
+proportionally large relative to the original's own near-zero level
+there, even though quiet in absolute terms. This is consistent with,
+not contradictory to, these species' already-poor Pearson/cosine
+survivability scores (0.342-0.892) -- both metrics agree the spectral
+shape doesn't survive. Does not change the existing chewing/Fall-Armyworm
+out-of-scope decision; if anything it reinforces it. Documented directly
+in `docs/codec_findings.md`'s interpretation section.

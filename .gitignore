@@ -22,6 +22,11 @@ data/processed_full_fidelity/
 data/processed_2s_ablation/
 data/codec_experiment/real/*
 !data/codec_experiment/real/.gitkeep
+data/codec_experiment/real_roundtrip/sent/*
+!data/codec_experiment/real_roundtrip/sent/.gitkeep
+data/codec_experiment/real_roundtrip/received/*
+!data/codec_experiment/real_roundtrip/received/.gitkeep
+data/codec_experiment/real_roundtrip/simulated/
 
 # models are regenerable from 05_train.R but can be large — track via git-lfs or exclude
 models/*.rds

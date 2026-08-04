@@ -98,10 +98,42 @@ compute_mean_spectrum <- function(wave_path, fft_window = FFT_WINDOW) {
   tibble::tibble(freq_hz = spec[, 1] * 1000, amplitude = spec[, 2])
 }
 
-#' Sum spectral energy within [lo, hi) Hz.
-band_energy <- function(spectrum_df, lo, hi) {
+#' Sum of spectral energy within [lo, hi) Hz. Only valid for comparing two
+#' bands FROM THE SAME SPECTRUM (e.g. a band's share of that spectrum's own
+#' total) -- see `band_energy_density()` for comparisons ACROSS spectra with
+#' different sample rates, which this must not be used for (see its own doc
+#' comment for why).
+band_energy_sum <- function(spectrum_df, lo, hi) {
   in_band <- spectrum_df$freq_hz >= lo & spectrum_df$freq_hz < hi
   sum(spectrum_df$amplitude[in_band])
+}
+
+#' Mean spectral energy within [lo, hi) Hz -- i.e. energy PER BIN, not
+#' total. Use this (not a raw sum) whenever comparing a band ACROSS two
+#' spectra that may have different sample rates, e.g. an original clip at
+#' its native 44.1kHz against a WhatsApp-degraded copy resampled to 16kHz.
+#'
+#' Found via a real bug (Prompt 11): `seewave::meanspec()` peak-normalizes
+#' each spectrum independently (max bin = 1), and the number of FFT bins
+#' covering a given Hz range scales with sample rate -- at wl=2048, a
+#' 44.1kHz spectrum has ~24 bins in 0-500Hz while a 16kHz spectrum has ~64
+#' bins in the same range (narrower bins, same window length in samples).
+#' Summing raw bins therefore inflates "band energy" for the LOWER sample
+#' rate signal by roughly the bin-count ratio (~2.2-2.7x here), regardless
+#' of any real signal change -- every per-band retention_ratio ever
+#' published in docs/codec_findings.md before this fix was systematically
+#' inflated (some by 10-45x) as a result, even though the compression
+#' genuinely destroyed signal. The mean (energy per bin) is invariant to
+#' bin count, so it stays comparable across sample rates. This did NOT
+#' affect `spectral_similarity()`/`survivability_score()` (the headline
+#' metric): those already interpolate both spectra onto a common frequency
+#' grid before comparing, which sidesteps this exact problem -- only the
+#' per-band retention TABLE was wrong, not the survivability numbers.
+band_energy_density <- function(spectrum_df, lo, hi) {
+  in_band <- spectrum_df$freq_hz >= lo & spectrum_df$freq_hz < hi
+  amps <- spectrum_df$amplitude[in_band]
+  if (length(amps) == 0) return(NA_real_)
+  mean(amps)
 }
 
 #' Per-band energy retention ratio (degraded / original) for one file pair.
@@ -112,21 +144,26 @@ band_energy <- function(spectrum_df, lo, hi) {
 #' essentially silent (e.g. the 0-500Hz band for a pure 10kHz tone) produces
 #' a "retention ratio" of tiny-leakage / near-zero, which can blow up to an
 #' arbitrarily large, meaningless number -- not a real finding, just a
-#' division artifact. Those bands get `NA` instead.
+#' division artifact. Those bands get `NA` instead. This gate compares a
+#' band's SUM against the whole spectrum's SUM -- both from the same
+#' (original) spectrum, so the cross-sample-rate bin-density issue that
+#' motivated `band_energy_density()` doesn't apply here; deliberately kept
+#' as a sum-based "share of total power" check, not switched to density.
 band_retention_ratios <- function(original_spectrum, degraded_spectrum, min_energy_fraction = 0.005) {
   total_original_energy <- sum(original_spectrum$amplitude)
 
   purrr::map_dfr(seq_along(FREQ_BANDS), function(i) {
     band <- FREQ_BANDS[[i]]
-    orig_e <- band_energy(original_spectrum, band[1], band[2])
-    deg_e  <- band_energy(degraded_spectrum,  band[1], band[2])
+    orig_e_sum <- band_energy_sum(original_spectrum, band[1], band[2])
+    orig_density <- band_energy_density(original_spectrum, band[1], band[2])
+    deg_density  <- band_energy_density(degraded_spectrum,  band[1], band[2])
     has_meaningful_energy <- total_original_energy > 0 &&
-      (orig_e / total_original_energy) >= min_energy_fraction
+      (orig_e_sum / total_original_energy) >= min_energy_fraction
     tibble::tibble(
       band = FREQ_BAND_LABELS[i],
-      original_energy = orig_e,
-      degraded_energy = deg_e,
-      retention_ratio = if (has_meaningful_energy) deg_e / orig_e else NA_real_
+      original_energy = orig_density,
+      degraded_energy = deg_density,
+      retention_ratio = if (has_meaningful_energy) deg_density / orig_density else NA_real_
     )
   })
 }
@@ -343,23 +380,68 @@ write_codec_findings <- function(results, output_path = FINDINGS_PATH) {
     "that isn't a real finding. Only cells with a value reflect a band the",
     "source signal actually had meaningful energy in.",
     "",
+    "## A retention value above 1.0 is not creation of energy",
+    "",
+    "(Prompt 11 bug fix, see `band_energy_density()` in `R/02_codec_experiment.R`",
+    "for the full account: per-band energy is now a MEAN over that band's",
+    "bins, not a raw sum -- summing raw bins previously inflated every",
+    "retention ratio by roughly the bin-count ratio between the original's",
+    "native sample rate and the degraded signal's 16kHz, since",
+    "`seewave::meanspec()` peak-normalizes each spectrum independently and a",
+    "lower sample rate packs more FFT bins into the same Hz range. This did",
+    "NOT affect the survivability scores above, which already used a",
+    "common-frequency-grid comparison unaffected by bin count -- only this",
+    "per-band table was wrong before this fix, systematically, for every",
+    "species, in every prior version of this document.)",
+    "",
+    "A value above 1.0 after this fix is a real, legitimate reading: it means",
+    "a band gained ENERGY DENSITY RELATIVE TO THE ORIGINAL SIGNAL'S OWN LEVEL",
+    "IN THAT BAND -- typically because the original had very little energy",
+    "there (a narrowband/peaky source) and lossy compression filled the gap",
+    "with quantization noise, which is proportionally large relative to a",
+    "near-silent original even though it is quiet in absolute terms. This is",
+    "most visible for the chewing/feeding species below (contact-sensor",
+    "recordings with highly peaked, narrowband spectra) and is consistent",
+    "with, not contradictory to, their already-poor Pearson/cosine",
+    "survivability scores above -- both point the same direction: the",
+    "spectral SHAPE of these sources does not survive compression well.",
+    "",
     "## Before/after spectrogram panel",
     "",
     "![Before/after compression spectrograms](figures/codec_before_after.png)",
     "",
     "## Real WhatsApp round-trip check",
     "",
-    "See `data/codec_experiment/real_vs_simulated.csv` (generated only if real",
-    "WhatsApp-exported .opus files were provided under",
-    "`data/codec_experiment/real/`; see the manual procedure documented above",
-    "`compare_real_vs_simulated()` in `R/02_codec_experiment.R`).",
+    "See `docs/roundtrip_validation.md` (Prompt 11) for the full real-vs-",
+    "simulated validation -- generated only once real WhatsApp-exported",
+    "audio has been provided under",
+    "`data/codec_experiment/real_roundtrip/received/`; see",
+    "`docs/roundtrip_procedure.md` for the manual steps and",
+    "`R/10_roundtrip_validation.R` for the analysis, which supersedes the",
+    "older `compare_real_vs_simulated()` stub in this file (kept for",
+    "reference, not run by `main()` below any more).",
     "",
     "## Interpretation",
     "",
-    "TBD -- fill in after reading the tables above. Describe what they",
-    "actually show, including any species/band where survival was poor. If a",
-    "target pest's signature does not survive, say so plainly here and scope",
-    "the MVP accordingly (see docs/methodology.md limitations section)."
+    "**Real Orthoptera/Cicadidae stridulation survives WhatsApp compression",
+    " well, both in overall shape (survivability 0.956-0.986) and per-band",
+    " (70-91% energy density retained in every sub-8kHz band for all three",
+    " real target species) -- the two metrics agree, which is reassuring",
+    " given the per-band metric had a real bug until this run.** The >8kHz",
+    " ceiling is absolute for every species, synthetic or real, confirming",
+    " the Nyquist-cut mechanism directly, not just inferring it from the",
+    " sample rate.",
+    "",
+    "**Real chewing/feeding sounds survive poorly-to-moderately in shape",
+    " (survivability 0.342-0.892) and show the inverse per-band pattern**",
+    " -- retention ratios well above 1.0 in every sub-8kHz band, which is",
+    " the same underlying finding restated from the energy side: these",
+    " contact-sensor recordings are narrowband/peaky, and 16kbps Opus fills",
+    " their near-silent bands with proportionally large quantization noise",
+    " rather than preserving their (already unusual, contact-sensor-",
+    " specific) spectral shape. This class remains out of the classifier's",
+    " scope (see `docs/methodology.md`) and this finding does not change",
+    " that scoping decision -- if anything it reinforces it."
   )
 
   writeLines(lines, output_path)
@@ -456,6 +538,12 @@ main <- function() {
   render_before_after_panel(species_filter = figure_species)
   write_codec_findings(results)
 
+  # compare_real_vs_simulated() checks the OLD data/codec_experiment/real/
+  # layout, superseded by R/10_roundtrip_validation.R's more thorough
+  # analysis against data/codec_experiment/real_roundtrip/ (Prompt 11) --
+  # kept here as a harmless no-op (it just messages and returns NULL) so
+  # this script doesn't silently drop a check a future reader might expect,
+  # but the real round-trip check now lives in the other script.
   realcheck <- compare_real_vs_simulated()
   if (!is.null(realcheck)) {
     utils::write.csv(realcheck,

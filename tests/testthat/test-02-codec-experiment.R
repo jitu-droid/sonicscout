@@ -1,7 +1,22 @@
-test_that("band_energy sums amplitude within [lo, hi)", {
+test_that("band_energy_sum sums amplitude within [lo, hi)", {
   spec <- tibble::tibble(freq_hz = c(0, 250, 500, 750, 1000), amplitude = c(1, 1, 1, 1, 1))
-  expect_equal(band_energy(spec, 0, 500), 2)     # 0 and 250 Hz fall in [0, 500)
-  expect_equal(band_energy(spec, 500, 1000), 2)  # 500 and 750 Hz fall in [500, 1000)
+  expect_equal(band_energy_sum(spec, 0, 500), 2)     # 0 and 250 Hz fall in [0, 500)
+  expect_equal(band_energy_sum(spec, 500, 1000), 2)  # 500 and 750 Hz fall in [500, 1000)
+})
+
+test_that("band_energy_density averages amplitude within [lo, hi), invariant to bin count", {
+  # Regression test (Prompt 11): band_energy_sum() (a raw sum) is NOT valid
+  # for comparing a band ACROSS two spectra with different bin counts in
+  # that range (e.g. different sample rates) -- summing more, finer bins
+  # inflates the total even with identical per-bin values. band_energy_density()
+  # must return the SAME value regardless of how many bins cover the band,
+  # as long as their amplitudes are the same.
+  coarse <- tibble::tibble(freq_hz = c(100, 300), amplitude = c(1, 1))
+  fine   <- tibble::tibble(freq_hz = c(50, 150, 250, 350), amplitude = c(1, 1, 1, 1))
+  expect_equal(band_energy_density(coarse, 0, 500), 1)
+  expect_equal(band_energy_density(fine, 0, 500), 1)
+  expect_equal(band_energy_sum(coarse, 0, 500), 2)
+  expect_equal(band_energy_sum(fine, 0, 500), 4)  # sum DOES scale with bin count -- this is the bug this fix avoids
 })
 
 test_that("band_retention_ratios computes degraded/original per band, incl. the >8kHz wall", {

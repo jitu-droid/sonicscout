@@ -1314,3 +1314,35 @@ survivability scores (0.342-0.892) -- both metrics agree the spectral
 shape doesn't survive. Does not change the existing chewing/Fall-Armyworm
 out-of-scope decision; if anything it reinforces it. Documented directly
 in `docs/codec_findings.md`'s interpretation section.
+
+### Part 2a: Twilio prep
+
+`api/plumber.R` now validates its own startup conditions (fails
+immediately, not on first request, if credentials or the model are
+missing) -- verified this actually fires correctly. Added
+`R/11_twilio_smoke_test.R` (credentials load, Twilio API reachable AND
+these specific credentials accepted, local webhook health-check) --
+verified against both no credentials and fake credentials (correctly gets
+HTTP 401 from Twilio, confirming the reachability check itself works).
+Updated `docs/twilio_setup.md` with the smoke-test step, wall-clock
+latency capture instructions, and explicit failure-path testing (text-only
+message, short clip, silent clip, non-audio attachment).
+
+### Part 3: prevalence sensitivity -- done now, see the commit above
+
+Full detail in the "Precision depends on real-world prevalence" section
+of `docs/methodology.md` and `docs/operating_point.md` -- not repeated
+here.
+
+### Status: automatable work for Parts 1-2 is done; waiting on Jitu
+
+Per Prompt 11's explicit instruction, this session does NOT simulate
+Jitu's phone steps or fabricate round-trip/Twilio results. Everything that
+can be prepared without a real phone is done and committed
+(`data/codec_experiment/real_roundtrip/sent/` populated,
+`R/10_roundtrip_validation.R` and `R/11_twilio_smoke_test.R` written and
+smoke-tested against synthetic/fake data, `docs/roundtrip_procedure.md`
+and `docs/twilio_setup.md` written). The exact checklists for both were
+handed to Jitu directly in chat. Part 4 (freeze) and the rest of Part 1c/2c
+are blocked on real data from those two physical steps and have not been
+started.

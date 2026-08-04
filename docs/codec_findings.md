@@ -26,6 +26,18 @@ not estimates. Re-run the script to regenerate this file from scratch.
 
 ## Per-frequency-band energy retention (degraded / original)
 
+**Read this before the table.** "Energy" here is
+`seewave::meanspec()`'s power-spectrum amplitude, independently
+peak-normalized PER SPECTRUM (each spectrum's own loudest FFT bin = 1)
+-- it is not a calibrated, absolute acoustic energy measure (no dB SPL,
+no Joules, no RMS level comparable across files or bands). A
+`retention_ratio` is therefore a ratio of RELATIVE spectral-shape
+magnitude between two independently-normalized spectra of the SAME
+file pair, not "what fraction of the clip's real acoustic energy
+survived." Only compare a band's degraded value against that same
+band's original value, within the same file's pair -- the table's
+columns and rows are not on a common absolute scale with each other.
+
 |species                            | 0-500Hz| 2-4kHz| 4-8kHz| 500Hz-2kHz| >8kHz|
 |:----------------------------------|-------:|------:|------:|----------:|-----:|
 |real_chewing_diaprepes_abbreviatus |   1.593|  1.687|  1.504|      1.788|    NA|
@@ -121,3 +133,29 @@ reference, not run by `main()` below any more).
  specific) spectral shape. This class remains out of the classifier's
  scope (see `docs/methodology.md`) and this finding does not change
  that scoping decision -- if anything it reinforces it.
+
+## Why the NA gate does not catch these large ratios (and should not)
+
+The NA gate (see "Reading NA retention cells" above) and the large
+chewing-species ratios above are two different, independently-verified
+mechanisms guarding against two different failure modes -- confirmed by
+direct inspection of the intermediate numbers, not assumed:
+
+- The gate asks: does this band hold a non-trivial SHARE of the
+  original spectrum's TOTAL sum (>= 0.5%)? It exists to null out bands
+  the original signal barely touched at all (share near 0%), where any
+  ratio would be a division-by-near-nothing artifact, not a finding.
+- The large ratios (up to ~53x, e.g. *Sitophilus oryzae* 500Hz-2kHz:
+  17.6% share of total energy -- comfortably meaningful by the gate --
+  yet orig_density 0.0102 vs degraded_density 0.541) come from a
+  DIFFERENT cause: within a band the gate correctly calls meaningful,
+  the original's energy is still concentrated in only a few of that
+  band's bins (peaky/narrowband), so the band's MEAN density stays low
+  even though its SUM is non-trivial. Compression then fills the
+  band's many near-silent bins with noise, raising the mean sharply.
+  This is real signal about spectral shape, not a gate miss -- share
+  and density measure different things on purpose (see
+  `band_energy_sum()` vs `band_energy_density()` doc comments), and
+  spot-checks across every chewing-species band confirm the pattern
+  holds consistently: large ratios track within-band concentration in
+  the original, not a share value near the 0.5% threshold.

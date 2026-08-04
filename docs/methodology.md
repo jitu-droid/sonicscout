@@ -109,6 +109,9 @@ stridulation retains enough discriminative structure after the WhatsApp
 round-trip to remain classifiable. A synthetic 10kHz ground-truth control
 tone confirms the simulation genuinely destroys content above 8kHz
 (survivability 0.101, >8kHz band retention 0) -- not just in theory.
+(Per-band "retention" figures are ratios of independently peak-normalized
+spectral amplitude, not calibrated absolute acoustic energy -- see
+`docs/codec_findings.md` for the full caveat before quoting one.)
 
 **Real chewing/feeding sound survivability is poor-to-moderate, and was
 measured under a best-case capture condition, not a realistic one.**

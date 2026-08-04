@@ -1315,6 +1315,14 @@ shape doesn't survive. Does not change the existing chewing/Fall-Armyworm
 out-of-scope decision; if anything it reinforces it. Documented directly
 in `docs/codec_findings.md`'s interpretation section.
 
+### Follow-up verification, requested before any real-world data was sent
+
+Before sending anything, three checks were requested on the band_energy fix above:
+
+1. **Was `survivability_score` actually recomputed post-fix, not just assumed unaffected?** Re-ran `R/02_codec_experiment.R` again just now (this file's own generation code path already runs both computations together) -- `docs/codec_findings.md`'s survivability table came back byte-for-byte identical (0.986 *C. biguttulus*, 0.972 *Cicada orni*, 0.956 *C. brunneus*, etc.), confirming empirically, not just by code inspection, that `spectral_similarity()`'s common-grid interpolation path never touched the buggy code.
+2. **Does "retention" wording anywhere imply absolute energy conservation rather than a relative, peak-normalized ratio?** It could be read that way -- `seewave::meanspec()` peak-normalizes each spectrum independently, so a "retention_ratio" compares relative spectral-shape magnitude within one file's pair of spectra, not calibrated acoustic energy across files or bands. Added an explicit caveat to `write_codec_findings()` (so it survives regeneration) right before the per-band table in `docs/codec_findings.md`, plus a one-line pointer in `docs/methodology.md`.
+3. **Is the near-zero-denominator NA gate applied consistently to the chewing species' >100% values?** Traced the actual intermediate numbers (share of total energy, orig/degraded density) for every chewing-species band. Confirmed the gate (0.5% share-of-total-sum) is applied identically everywhere, with no species-specific exception, and that it guards a different failure mode (a band the original barely touched at all) than what drives the large ratios (up to ~53x for *S. oryzae* 500Hz-2kHz: 17.6% share -- comfortably past the gate -- but orig_density only 0.0102 because that band's energy sits in a few concentrated bins, not spread across it). That's real within-band spectral concentration, not a gate miss; documented with the worked example directly in `docs/codec_findings.md`.
+
 ### Part 2a: Twilio prep
 
 `api/plumber.R` now validates its own startup conditions (fails

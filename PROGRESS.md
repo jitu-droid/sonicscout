@@ -1342,6 +1342,41 @@ Full detail in the "Precision depends on real-world prevalence" section
 of `docs/methodology.md` and `docs/operating_point.md` -- not repeated
 here.
 
+### Round-trip validation split into two experiments (requested before any real data was sent)
+
+Before sending anything, Jitu raised a real methodological gap: WhatsApp
+voice notes can only be recorded in-app (mic button) -- there's no way to
+hand WhatsApp a WAV and have it become a voice note. Sending the prepared
+WAVs as file attachments (the original Part 1a design) might therefore go
+through a different, or no, transcoding path than a real recorded voice
+note, meaning the original single-experiment design risked validating the
+wrong thing.
+
+**Fix: split into two independent experiments**, both against the same 4
+source clips: `attachment` (sent as a file/audio attachment -- isolates
+transport, no acoustic capture) and `voicenote` (played aloud and
+re-recorded via WhatsApp's mic button -- the actual deployment path,
+bundling acoustic-capture loss with codec loss). `R/10_roundtrip_validation.R`
+now runs both arms independently (new directories
+`data/codec_experiment/real_roundtrip/received/{attachment,voicenote}/`),
+applies the same pre-registered tolerance to each, and adds a comparison
+section that AUTO-DETECTS from the numbers (not assumed) whether the
+attachment arm was actually transcoded or was a near-lossless passthrough
+-- this determines whether the attachment-vs-voicenote delta can be read
+as acoustic-path-loss-only or must be read as total voice-note-path loss.
+The voice-note arm is the headline verdict (it's the real deployment
+path); the attachment arm is diagnostic. Smoke-tested end to end with
+fake data covering both a near-passthrough case (AAC 256kbps attachment)
+and a genuinely-diverging case (8kHz/12kbps voicenote vs the 16kHz/16kbps
+simulation) -- confirmed both the PASS/CAUTION/FAIL logic and the
+passthrough-detection branch render correctly, then deleted the fake data
+and regenerated the real (empty) placeholder doc, same discipline as the
+original band_energy-bug smoke test.
+
+`docs/roundtrip_procedure.md` rewritten with separate numbered steps for
+each experiment (Document/Audio attach vs. play-aloud-and-record), the
+revised checklist was handed to Jitu directly in chat.
+
 ### Status: automatable work for Parts 1-2 is done; waiting on Jitu
 
 Per Prompt 11's explicit instruction, this session does NOT simulate

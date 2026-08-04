@@ -194,6 +194,54 @@ main <- function(cv_predictions_path = CV_PREDICTIONS_PATH, results_path = RESUL
   }
   chosen_threshold <- chosen$threshold
 
+  # ---- Prevalence sensitivity (Prompt 11, Part 3) --------------------------
+  #
+  # Precision at the chosen threshold (90.1%) is a property of THIS CORPUS's
+  # class balance (~50% pest, ~50% ambient by clip count -- an artifact of
+  # how this project sampled data, not a claim about real farm deployment
+  # conditions). Precision at a given recall/FPR is NOT independent of the
+  # true prevalence of the condition being screened for -- standard
+  # screening-test arithmetic (a direct application of Bayes' rule):
+  #
+  #   precision(p) = (recall * p) / (recall * p + fpr * (1 - p))
+  #
+  # where p is the assumed fraction of clips that truly contain a pest
+  # signal. Swept across plausible real-world prevalences, not just
+  # reported at the corpus's own ~50/50 split.
+  PREVALENCE_LEVELS <- c(0.01, 0.05, 0.10, 0.25, 0.50)
+  precision_at_prevalence <- function(p, recall, fpr) {
+    tp_rate <- recall * p
+    fp_rate <- fpr * (1 - p)
+    if ((tp_rate + fp_rate) == 0) return(NA_real_)
+    tp_rate / (tp_rate + fp_rate)
+  }
+  prevalence_table <- data.frame(
+    prevalence = PREVALENCE_LEVELS,
+    precision = vapply(PREVALENCE_LEVELS, precision_at_prevalence, numeric(1),
+                        recall = chosen$recall, fpr = chosen$fpr)
+  )
+
+  # Verification, not just computation: does the ACTUAL corpus prevalence
+  # (measured, not assumed) reproduce the actually-reported precision
+  # (90.1%) through this same formula? If it doesn't, the formula or the
+  # underlying recall/FPR numbers are wrong somewhere and that needs
+  # resolving before this table is trustworthy.
+  actual_prevalence <- mean(preds_clip$label != "ambient")
+  reproduced_precision <- precision_at_prevalence(actual_prevalence, chosen$recall, chosen$fpr)
+  precision_check_diff <- abs(reproduced_precision - chosen$precision)
+  precision_check_ok <- !is.na(precision_check_diff) && precision_check_diff < 0.005  # within 0.5pp -- rounding only
+
+  if (!precision_check_ok) {
+    warning(sprintf(
+      paste0("Prevalence-sensitivity self-check FAILED: at the corpus's own measured ",
+             "prevalence (%.4f), the formula reproduces %.4f precision but the actual ",
+             "reported precision is %.4f (diff %.4f, tolerance 0.005) -- the formula or ",
+             "the underlying recall/FPR numbers are wrong; do not trust the prevalence table ",
+             "until this is resolved."),
+      actual_prevalence, reproduced_precision, chosen$precision, precision_check_diff
+    ))
+  }
+
   # ---- Windows-per-clip context (so the pooling benefit isn't overstated) --
   windows_per_clip <- NULL
   if (file.exists(windows_manifest_path)) {
@@ -362,17 +410,68 @@ main <- function(cv_predictions_path = CV_PREDICTIONS_PATH, results_path = RESUL
     "",
     "This threshold is now `R/06_predict.R`'s `LOW_CONFIDENCE_THRESHOLD` default, and the ",
     "webhook's low-confidence reply path uses it directly -- what the farmer receives now ",
-    "matches what this analysis reports, not a separate unexamined number."
+    "matches what this analysis reports, not a separate unexamined number.",
+    "",
+    "## Precision as a function of true pest prevalence (Prompt 11, Part 3)",
+    "",
+    sprintf("This corpus's clip-level class balance is **%s pest / %s ambient** (%d of %d clips)",
+            fmt_pct(actual_prevalence), fmt_pct(1 - actual_prevalence),
+            sum(preds_clip$label != "ambient"), nrow(preds_clip)),
+    " -- an artifact of how this project sampled real recordings (45 recordings per real target",
+    " species, 145 ambient), NOT a claim about what fraction of real farm nighttime recordings",
+    " actually contain a target pest. Precision at a fixed recall/false-positive-rate is NOT",
+    " independent of the true prevalence of the condition being screened for -- standard",
+    " screening-test arithmetic:",
+    "",
+    "`precision(p) = (recall * p) / (recall * p + fpr * (1 - p))`",
+    "",
+    sprintf("using this threshold's recall (%s) and false-positive rate (%s):",
+            fmt_pct(chosen$recall), fmt_pct(chosen$fpr)),
+    "",
+    knitr_table_or_fallback(data.frame(
+      assumed_prevalence = vapply(prevalence_table$prevalence, fmt_pct, character(1)),
+      precision = vapply(prevalence_table$precision, fmt_pct, character(1))
+    )),
+    "",
+    sprintf(
+      "**Self-check: does the formula reproduce the actually-measured precision at this corpus's own prevalence?** At the corpus's exact measured prevalence (%s, not the rounded 50%% row above), the formula gives %s precision; the actually-reported clip-level precision is %s (difference: %s). %s",
+      fmt_pct(actual_prevalence), fmt_pct(reproduced_precision), fmt_pct(chosen$precision),
+      fmt_pct(precision_check_diff),
+      if (precision_check_ok) {
+        "**Matches within rounding -- the formula and the underlying rates are consistent.**"
+      } else {
+        "**DOES NOT MATCH within tolerance -- see the warning this script emitted; do not trust the table above until resolved.**"
+      }
+    ),
+    "",
+    "**Why this table matters more than any single precision number:** at 1% assumed prevalence",
+    " (closer to what an unselected nighttime farm recording might plausibly be, though this",
+    " project has no real measurement of that rate either), precision collapses -- most alerts",
+    " would be false alarms, because false alarms scale with the much larger pool of true",
+    " negatives while true detections scale with a small pool of true positives. This is exactly",
+    " why this system is positioned as a **screening tool a farmer still exercises judgement",
+    " on**, not an autonomous alert trigger that acts without a human in the loop -- the",
+    " corpus's ~50/50 balance is not deployment-representative, and presenting the 90.1% figure",
+    " alone without this table would overstate what a farmer should expect at low real-world",
+    " prevalence.",
+    "",
+    "**Temporal persistence as future work:** repeated sampling from the same location over time",
+    " (e.g. several voice notes from the same field over a few nights) would raise EFFECTIVE",
+    " precision beyond any single-clip number in this table, since independent false alarms are",
+    " unlikely to repeatedly and consistently point at the same pest across multiple separate",
+    " recordings, while a genuine infestation would. This project has not implemented or measured",
+    " that -- it is a stated direction for future work, not a claim made here."
   )
   writeLines(lines, results_path)
 
-  message(sprintf("Operating point (clip-level): threshold=%.2f (precision=%s, recall=%s, FPR=%s). Written to %s",
+  message(sprintf("Operating point (clip-level): threshold=%.2f (precision=%s, recall=%s, FPR=%s). Prevalence self-check: %s. Written to %s",
                    chosen_threshold, fmt_pct(chosen$precision), fmt_pct(chosen$recall),
-                   fmt_pct(chosen$fpr), results_path))
+                   fmt_pct(chosen$fpr), if (precision_check_ok) "OK" else "FAILED", results_path))
 
   invisible(list(curve_window = curve_window, curve_clip = curve_clip, species_curve_clip = species_curve_clip,
                  chosen = chosen, majority_baseline_acc = majority_baseline_acc, chance_rate = chance_rate,
-                 windows_per_clip = windows_per_clip))
+                 windows_per_clip = windows_per_clip, prevalence_table = prevalence_table,
+                 actual_prevalence = actual_prevalence, precision_check_ok = precision_check_ok))
 }
 
 if (sys.nframe() == 0) {

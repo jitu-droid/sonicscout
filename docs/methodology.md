@@ -393,6 +393,54 @@ improvement over the window-level one, not an overstatement of it, but its
 size in this analysis should not be read as the exact size a short farmer
 recording will see in practice.
 
+## Precision depends on real-world prevalence, not just the model (Prompt 11, Part 3)
+
+**90.1% precision is a property of this corpus's class balance as much as**
+**of the model.** This corpus is ~49.1% pest / ~50.9% ambient by clip count
+-- an artifact of how real recordings were sampled (45 per real target
+species, 145 ambient), not a claim about what fraction of real farm
+nighttime recordings actually contain a target pest. Precision at a fixed
+recall/false-positive-rate is not independent of the true prevalence of
+the condition being screened for -- standard screening-test arithmetic:
+`precision(p) = (recall * p) / (recall * p + fpr * (1 - p))`, using this
+threshold's recall (72.7%) and false-positive rate (7.7%):
+
+| Assumed prevalence | Precision |
+|---|---|
+| 1% | 8.7% |
+| 5% | 33.1% |
+| 10% | 51.1% |
+| 25% | 75.8% |
+| 50% | 90.4% |
+
+**Verified, not just computed:** at the corpus's EXACT measured prevalence
+(49.1%, not the rounded 50% row above), this formula reproduces 90.1%
+precision exactly -- matching the actually-reported clip-level precision
+to within rounding, confirming the formula and underlying recall/FPR
+numbers are self-consistent. (`docs/operating_point.md` runs and reports
+this check automatically on every regeneration; if the check ever fails,
+that document says so explicitly and the table should not be trusted
+until resolved.)
+
+**This table is why the system is positioned as a screening tool a farmer**
+**still exercises judgement on, not an autonomous alert trigger.** At 1%
+assumed prevalence -- plausibly closer to an unselected nighttime farm
+recording, though this project has no real measurement of that rate
+either -- precision collapses to 8.7%: most alerts would be false alarms,
+because false alarms scale with the much larger pool of true negatives
+while true detections scale with a small pool of true positives. The
+corpus's ~50/50 balance is not deployment-representative, and reporting
+the 90.1% figure alone, without this table, would overstate what a farmer
+should actually expect.
+
+**Future work: temporal persistence.** Repeated sampling from the same
+location over time (several voice notes from the same field across a few
+nights) would raise EFFECTIVE precision beyond any single-clip number in
+this table, since independent false alarms are unlikely to repeatedly and
+consistently point at the same pest across multiple separate recordings,
+while a genuine infestation would. Not implemented or measured in this
+project -- a stated direction for future work, not a claim made here.
+
 ## Near-silent windows are gated, not kept and mislabelled
 
 A training window inherits its whole source recording's label

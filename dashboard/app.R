@@ -15,6 +15,7 @@ library(plotly)
 library(tuneR)
 library(seewave)
 library(jsonlite)
+library(markdown)  # used by includeMarkdown() for the Compression Analysis write-up
 
 # shiny::runApp() switches the working directory to dashboard/, but the
 # request log stores audio paths relative to the repo root

@@ -16,7 +16,17 @@ library(tuneR)
 library(seewave)
 library(jsonlite)
 
-REPO_ROOT <- ".."
+# shiny::runApp() switches the working directory to dashboard/, but the
+# request log stores audio paths relative to the repo root
+# ("logs/audio/<hash>.wav"). Anchor everything to an absolute repo root
+# (same approach as api/plumber.R) and resolve logged paths against it.
+REPO_ROOT <- normalizePath(
+  if (file.exists(file.path("R", "utils.R"))) "." else ".."
+)
+resolve_repo_path <- function(path) {
+  if (is.na(path) || !nzchar(path)) return(NA_character_)
+  if (grepl("^([A-Za-z]:)?[/\\\\]", path)) path else file.path(REPO_ROOT, path)
+}
 REQUEST_LOG_PATH    <- file.path(REPO_ROOT, "logs", "requests.jsonl")
 CODEC_FIGURE_PATH   <- file.path(REPO_ROOT, "docs", "figures", "codec_before_after.png")
 CODEC_FINDINGS_PATH <- file.path(REPO_ROOT, "docs", "codec_findings.md")
@@ -140,8 +150,9 @@ server <- function(input, output, session) {
 
   selected_wave <- reactive({
     row <- selected_row()
-    req(!is.na(row$audio_path), file.exists(row$audio_path))
-    tuneR::readWave(row$audio_path)
+    audio_path <- resolve_repo_path(row$audio_path)
+    req(!is.na(audio_path), file.exists(audio_path))
+    tuneR::readWave(audio_path)
   })
 
   output$waveform_plot <- renderPlot({
@@ -200,7 +211,12 @@ server <- function(input, output, session) {
         geo = list(showland = TRUE, showcountries = TRUE,
                    projection = list(type = "natural earth")),
         title = "Report location (demo)"
-      )
+      ) |>
+      # scattergeo otherwise downloads its world outline from
+      # https://cdn.plot.ly/world_110m.json at view time, which leaves a
+      # blank map with no network. Serve the bundled copy from
+      # dashboard/www/ instead so the demo survives a dead connection.
+      plotly::config(topojsonURL = "./")
   })
 
   output$request_details <- renderPrint({

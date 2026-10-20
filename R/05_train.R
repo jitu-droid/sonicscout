@@ -26,7 +26,8 @@
 #      trained on everything the CV number is measuring against).
 #
 # Usage:
-#   Rscript R/05_train.R
+#   Rscript R/05_train.R                  # cross-validate, train, write report
+#   Rscript R/05_train.R --report-only    # rewrite the report from saved CV predictions, no retraining
 #
 # Input:  data/processed/features.csv (from 04_features.R)
 # Output: models/classifier.rds (trained on the full corpus)
@@ -199,14 +200,147 @@ false_positive_rate_vs_ambient <- function(predicted, actual) {
   mean(predicted[is_ambient] != "ambient")
 }
 
+#' The HEADLINE metrics: real audio only (data_origin == "real").
+#'
+#' The model is trained with 4 synthetic classes plus synthetic broadband
+#' noise labelled "ambient" (data_origin == "synthetic"). A farmer's voice
+#' note is never synthetic, so the deployed question is how the model does
+#' on real audio: the 3 real species and real ESC-50 ambient. Computed from
+#' the out-of-fold predictions, per fold-evaluation, the same way as the
+#' all-class figures -- only the rows differ. A real window predicted as a
+#' synthetic class counts as wrong (it happened 0 times in the run this was
+#' introduced for, but nothing here assumes that).
+real_only_summary <- function(pooled_predictions) {
+  real <- pooled_predictions[pooled_predictions$data_origin == "real", ]
+  if (nrow(real) == 0) return(NULL)
+  fold_key <- paste(real$repeat_i, real$fold_i)
+  classes <- sort(unique(real$label))
+
+  per_fold <- function(hit, rows = rep(TRUE, nrow(real))) {
+    distribution_summary(as.numeric(tapply(hit[rows], fold_key[rows], mean)))
+  }
+  is_ambient <- real$label == "ambient"
+  class_counts <- table(real$label)
+
+  list(
+    classes = classes,
+    accuracy_dist = per_fold(real$predicted == real$label),
+    fpr_dist = per_fold(real$predicted != "ambient", is_ambient),
+    per_class_recall_dist = stats::setNames(lapply(classes, function(cl) {
+      per_fold(real$predicted == cl, real$label == cl)
+    }), classes),
+    pooled_precision = stats::setNames(vapply(classes, function(cl) {
+      called <- real$predicted == cl
+      if (any(called)) mean(real$label[called] == cl) else NA_real_
+    }, numeric(1)), classes),
+    n_sources = vapply(classes, function(cl) length(unique(real$source_file[real$label == cl])), integer(1)),
+    class_share = prop.table(class_counts),
+    majority_class = names(class_counts)[which.max(class_counts)],
+    majority_baseline = max(class_counts) / sum(class_counts),
+    chance_rate = 1 / length(classes),
+    n_real_windows = nrow(real),
+    n_synthetic_windows = sum(pooled_predictions$data_origin == "synthetic"),
+    n_real_predicted_synthetic = sum(!real$predicted %in% classes)
+  )
+}
+
+#' Rebuild the per-fold-evaluation results aggregate_kfold_results() needs
+#' from the saved out-of-fold predictions (data/processed/cv_predictions.csv),
+#' so docs/classifier_results.md can be regenerated WITHOUT retraining (and
+#' without changing models/classifier.rds). Every model in the run predicts
+#' the same class set (each class always has training sources in every
+#' fold), so that set is used for every fold's confusion matrix, exactly as
+#' train_and_evaluate() builds it.
+results_from_predictions <- function(preds) {
+  classes <- sort(unique(c(preds$label, preds$predicted)))
+  folds <- split(preds, list(preds$repeat_i, preds$fold_i), drop = TRUE)
+  lapply(folds, function(p) {
+    conf_mat <- table(predicted = factor(p$predicted, levels = classes),
+                      actual = factor(p$label, levels = classes))
+    list(conf_mat = conf_mat, prec_recall = per_class_precision_recall(conf_mat),
+         fpr_ambient = false_positive_rate_vs_ambient(p$predicted, p$label),
+         accuracy = mean(p$predicted == p$label), class_levels = classes,
+         predictions = p[, setdiff(names(p), c("repeat_i", "fold_i"))],
+         repeat_i = p$repeat_i[1], fold_i = p$fold_i[1])
+  })
+}
+
 # ---- Reporting ---------------------------------------------------------------
 
 #' @param source_counts Named integer vector: label -> number of distinct
 #'   source recordings backing it (fixed, independent of fold/repeat) --
 #'   Prompt 8, Step 4 requires every table state this.
+#' Markdown lines for the real-audio-only headline section (see
+#' real_only_summary()). Returns a short notice if the run had no real audio.
+real_only_headline_lines <- function(ro) {
+  if (is.null(ro)) {
+    return(c("## Headline: real audio only", "",
+             "No real audio in this run -- there is no real-audio headline. Treat everything ",
+             "below as synthetic-signal validation only.", ""))
+  }
+  recall_md <- knitr_table_or_fallback(data.frame(
+    class = ro$classes,
+    source_recordings = unname(ro$n_sources),
+    mean_recall = vapply(ro$per_class_recall_dist, function(s) fmt_pct(s$mean), character(1)),
+    sd = vapply(ro$per_class_recall_dist, function(s) if (is.na(s$sd)) "N/A" else paste0(round(s$sd * 100, 1), "pp"), character(1)),
+    range = vapply(ro$per_class_recall_dist, function(s) paste0(fmt_pct(s$lo95), " to ", fmt_pct(s$hi95)), character(1)),
+    pooled_precision = vapply(ro$pooled_precision, fmt_pct, character(1)),
+    stringsAsFactors = FALSE, row.names = NULL
+  ))
+  share_md <- paste(sprintf("%s %s", names(ro$class_share), vapply(as.numeric(ro$class_share), fmt_pct, character(1))),
+                    collapse = ", ")
+  c(
+    sprintf("## Headline: real audio only (%d real classes)", length(ro$classes)),
+    "",
+    sprintf("Scored on real test windows only: %s. A farmer's voice note is never ",
+            paste(ro$classes, collapse = ", ")),
+    sprintf("synthetic, so this is the deployed question. %d synthetic test windows are excluded (the ",
+            ro$n_synthetic_windows),
+    "4 synthetic classes plus synthetic broadband noise labelled ambient). A real window predicted as ",
+    sprintf("a synthetic class would count as wrong: that happened %d times.", ro$n_real_predicted_synthetic),
+    "",
+    "### Overall test accuracy (mean across all fold-evaluations)",
+    "",
+    sprintf("**%s**", fmt_distribution(ro$accuracy_dist)),
+    "",
+    "### False-positive rate against real ambient (mean across all fold-evaluations)",
+    "",
+    sprintf("**%s** of true (real) ambient test windows misclassified as a pest (false alarm), on average.",
+            fmt_distribution(ro$fpr_dist)),
+    "",
+    "### Baselines, so the accuracy means something",
+    "",
+    sprintf("- **Majority-class baseline: %s** -- always predicting the most common real class (`%s`).",
+            fmt_pct(ro$majority_baseline), ro$majority_class),
+    sprintf("  Real test windows by class: %s. Ambient is the SMALLEST real class, not the largest.", share_md),
+    sprintf("- **Chance rate: %s** (%d classes).", fmt_pct(ro$chance_rate), length(ro$classes)),
+    "",
+    "### Per-class test recall: mean, sd, and 95% range across fold-evaluations",
+    "",
+    recall_md,
+    "",
+    "`source_recordings` counts real recordings only.",
+    ""
+  )
+}
+
+#' @param provenance Optional note appended to the "Generated by" line (e.g.
+#'   that this report was rebuilt from saved predictions, not a fresh run).
 write_classifier_results <- function(agg, source_counts, data_origins, k, n_repeats,
-                                      results_path = RESULTS_PATH) {
+                                      results_path = RESULTS_PATH, provenance = NULL) {
   ensure_dir(dirname(results_path))
+  ro <- real_only_summary(agg$pooled_predictions)
+  headline_lines <- real_only_headline_lines(ro)
+  brunneus_recall <- if (!is.null(ro) && "chorthippus_brunneus" %in% ro$classes)
+    fmt_pct(ro$per_class_recall_dist$chorthippus_brunneus$mean) else "N/A"
+  biguttulus_recall <- if (!is.null(ro) && "chorthippus_biguttulus" %in% ro$classes)
+    fmt_pct(ro$per_class_recall_dist$chorthippus_biguttulus$mean) else "N/A"
+  cicada_recall <- if (!is.null(ro) && "cicada_orni" %in% ro$classes)
+    fmt_pct(ro$per_class_recall_dist$cicada_orni$mean) else "N/A"
+  cicada_precision <- if (!is.null(ro) && "cicada_orni" %in% ro$classes)
+    fmt_pct(ro$pooled_precision[["cicada_orni"]]) else "N/A"
+  headline_acc <- if (is.null(ro)) fmt_pct(agg$accuracy_dist$mean) else fmt_pct(ro$accuracy_dist$mean)
+  headline_fpr <- if (is.null(ro)) fmt_pct(agg$fpr_dist$mean) else fmt_pct(ro$fpr_dist$mean)
 
   conf_mat_df <- as.data.frame.matrix(agg$pooled_conf_mat)
   conf_mat_md <- knitr_table_or_fallback(cbind(predicted_class = rownames(conf_mat_df), conf_mat_df))
@@ -228,7 +362,8 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
            "Every number below is the distribution across ", k, "-fold grouped cross-validation, ",
            "repeated ", n_repeats, " times with different fold assignments (", k * n_repeats,
            " fold-evaluations total) -- NOT a single train/test split. See ",
-           "`docs/methodology.md` for why a single split is not defensible on this corpus."),
+           "`docs/methodology.md` for why a single split is not defensible on this corpus.",
+           if (!is.null(provenance)) paste0(" ", provenance) else ""),
     "",
     paste0("**Data origin in this run:** ", paste(names(data_origins), data_origins, sep = "=", collapse = ", "),
            " windows. If `synthetic` dominates or `real` is 0, treat these results as ",
@@ -238,19 +373,29 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     "",
     "A competent judge will ask about this before anything else -- these are the same ",
     "physical recordings re-shuffled into folds many different ways below, not new samples.",
+    "(The `ambient` count includes 5 synthetic broadband-noise clips labelled ambient.)",
     "",
     knitr_table_or_fallback(data.frame(class = names(source_counts), source_recordings = as.integer(source_counts))),
     "",
-    "## Overall test accuracy (mean across all fold-evaluations)",
+    headline_lines,
+    "## All 8 classes, including synthetic (reference only -- NOT the headline)",
+    "",
+    "The model is also trained on 4 synthetic classes and synthetic noise labelled ambient. ",
+    "The figures below score every test window, synthetic included, which is how this report ",
+    "computed its headline before the real-only section above was added. Kept for continuity ",
+    "with earlier reports and with the paired comparisons in `docs/ablation_results.md` and ",
+    "`docs/compression_delta.md`, which were computed this way.",
+    "",
+    "### Overall test accuracy, all classes (mean across all fold-evaluations)",
     "",
     sprintf("**%s**", fmt_distribution(agg$accuracy_dist)),
     "",
-    "## False-positive rate against the ambient/negative class (mean across all fold-evaluations)",
+    "### False-positive rate against the ambient/negative class, all classes",
     "",
-    sprintf("**%s** of true ambient test windows misclassified as a pest (false alarm), on average.",
+    sprintf("**%s** of true ambient test windows (real and synthetic) misclassified as a pest, on average.",
             fmt_distribution(agg$fpr_dist)),
     "",
-    "## Per-class test recall: mean, sd, and 95% range across fold-evaluations",
+    "### Per-class test recall, all classes: mean, sd, and 95% range across fold-evaluations",
     "",
     recall_dist_md,
     "",
@@ -258,7 +403,7 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     "recordings will show a wide spread here -- that spread IS the sample-size ",
     "warning, not noise to average away.",
     "",
-    "## Pooled confusion matrix (every fold-evaluation's test predictions, summed)",
+    "### Pooled confusion matrix (every fold-evaluation's test predictions, summed)",
     "",
     paste0("Each source recording appears in some fold's test set exactly ", n_repeats,
            " times across the whole procedure (once per repeat) -- this is a pooled view for ",
@@ -267,7 +412,7 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     "",
     conf_mat_md,
     "",
-    "## Precision/recall derived from the pooled confusion matrix",
+    "### Precision/recall derived from the pooled confusion matrix",
     "",
     pooled_pr_md,
     "",
@@ -280,7 +425,8 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     "",
     "## Interpretation",
     "",
-    "**68.5% mean accuracy, 21.9% mean false-positive rate against ambient.**",
+    sprintf("**%s mean accuracy, %s mean false-positive rate against ambient -- real audio only.**",
+            headline_acc, headline_fpr),
     " This project's headline numbers have gone through four stages, and",
     " that progression is itself the point: (1) an original \"0% false-",
     " positive rate\" from separating synthetic tone stacks from real",
@@ -290,12 +436,14 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     " distribution ranging roughly 10-92%; (3) 66.8%/22.3%, repeated",
     " grouped k-fold CV on an expanded ~45-recordings-per-species corpus",
     " with a window cap (Prompt 8) -- real and stable (SD ~5pp, not ~26pp)",
-    " even though harder than the number it replaced; (4) this run: the",
-    " same corpus and method, PLUS 11 temporal features (Prompt 9, Part 1)",
-    " targeting the specific biological mechanism behind this project's",
-    " weakest real class -- see below. Overall accuracy moved only",
-    " slightly (66.8% -> 68.5%), but the class the features were added",
-    " FOR moved more.",
+    " even though harder than the number it replaced; (4) the same corpus",
+    " and method, PLUS 11 temporal features (Prompt 9, Part 1) targeting",
+    " the specific biological mechanism behind this project's weakest real",
+    " class -- see below. Overall accuracy moved only slightly (66.8% ->",
+    " 68.5%, both scored over all 8 classes including synthetic, which is",
+    " how every stage up to this one was scored), but the class the",
+    " features were added FOR moved more. The headline is now scored on",
+    sprintf(" real audio only (%s): the synthetic windows were inflating it slightly.", headline_acc),
     "",
     "**Why temporal features, specifically for *C. brunneus*:**",
     " *Chorthippus biguttulus* and *C. brunneus* are sympatric congeners",
@@ -309,9 +457,9 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     " `docs/methodology.md` for the full biological reasoning.",
     "",
     "**Result: *C. brunneus* mean recall rose from 34% (Prompt 8, spectral-",
-    " only, 2s window) to 43.1% (Prompt 9, temporal features + 4s window)",
+    sprintf(" only, 2s window) to %s (Prompt 9, temporal features + 4s window)", brunneus_recall),
     " -- a real, meaningful gain in the specific class this was aimed at**,",
-    " while *C. biguttulus* stayed essentially flat (63.6% -> 62.4%). The",
+    sprintf(" while *C. biguttulus* stayed essentially flat (63.6%% -> %s). The", biguttulus_recall),
     " two species are still frequently confused with EACH OTHER (pooled",
     " confusion matrix: 1708 *C. brunneus* windows called *C. biguttulus*,",
     " 1082 the other way) -- the confusion is reduced, not resolved.",
@@ -349,15 +497,15 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     " information. See `docs/figures/variable_importance.png`.",
     "",
     "**Per-class otherwise:** *Cicada orni* remains the strongest real",
-    " class (92.5% mean recall, 92.2% pooled precision) -- a continuous,",
+    sprintf(" class (%s mean recall, %s pooled precision) -- a continuous,", cicada_recall, cicada_precision),
     " distinctive drone is apparently easier for this feature set than a",
     " pulsed call, temporal features or not.",
     "",
-    "**`synthetic_tone_plus_noise` (15% mean recall, sd 36.2pp) is the",
+    "**`synthetic_tone_plus_noise` (all-class reference table) is the",
     " textbook case of the sample-size warning this report leads with:**",
-    " only 4 source files back it, and its 95% range (0% to 100%) spans the",
-    " entire possible scale. Do not read 15% as a real measurement of",
-    " anything -- there isn't enough data behind it to measure at all.",
+    " only 4 source files back it, and its 95% range spans close to the",
+    " entire possible scale. Do not read its recall as a real measurement",
+    " of anything -- there isn't enough data behind it to measure at all.",
     "",
     "**Read this alongside `docs/operating_point.md`:** raw accuracy and",
     " FPR above use the unmodified argmax decision on individual WINDOWS",
@@ -366,7 +514,7 @@ write_classifier_results <- function(agg, source_counts, data_origins, k, n_repe
     " over CLIP-level predictions (pooled across a clip's windows exactly",
     " as `predict_pest()` does) and finds a materially better deployable",
     " trade-off (90.1% precision / 72.7% recall at threshold 0.45, vs. the",
-    " 21.9% FPR here at no threshold and no pooling at all) -- both numbers",
+    sprintf(" %s FPR here at no threshold and no pooling at all) -- both numbers", headline_fpr),
     " are honest; they answer different questions (\"how good is the model",
     " on a single window\" vs. \"what would a farmer actually experience at",
     " a chosen operating point, pooled across a clip's windows\")."
@@ -561,6 +709,24 @@ main <- function(features_path = FEATURES_PATH, model_path = MODEL_PATH,
   invisible(list(cv = cv, agg = agg, final = final, source_counts = source_counts))
 }
 
+#' Regenerate docs/classifier_results.md from the saved out-of-fold
+#' predictions, WITHOUT retraining -- models/classifier.rds and
+#' cv_predictions.csv are left untouched. Use after a reporting change.
+regenerate_report <- function(cv_predictions_path = CV_PREDICTIONS_PATH,
+                               features_path = FEATURES_PATH, results_path = RESULTS_PATH) {
+  preds <- utils::read.csv(cv_predictions_path, stringsAsFactors = FALSE)
+  agg <- aggregate_kfold_results(results_from_predictions(preds))
+  features_df <- utils::read.csv(features_path, stringsAsFactors = FALSE)
+  source_counts <- table(unique(features_df[, c("source_file", "label")])$label)
+  write_classifier_results(agg, source_counts, table(features_df$data_origin),
+                           k = max(preds$fold_i), n_repeats = max(preds$repeat_i),
+                           results_path = results_path,
+                           provenance = paste0("Report regenerated from the saved out-of-fold predictions (`",
+                                               cv_predictions_path, "`); the model was not retrained."))
+  message("Regenerated ", results_path, " from ", cv_predictions_path, " (no retraining).")
+  invisible(agg)
+}
+
 if (sys.nframe() == 0) {
-  main()
+  if ("--report-only" %in% commandArgs(trailingOnly = TRUE)) regenerate_report() else main()
 }

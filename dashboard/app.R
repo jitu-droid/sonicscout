@@ -58,6 +58,9 @@ read_request_log <- function(path) {
       duration_s  = suppressWarnings(as.numeric(if (is.null(entry$duration_s)) NA else entry$duration_s)),
       top_classes = if (is.null(entry$top_classes)) NA_character_ else entry$top_classes,
       confidences = if (is.null(entry$confidences)) NA_character_ else entry$confidences,
+      # Only demo-seed entries know their true label (R/seed_demo_logs.R);
+      # a live WhatsApp request never does.
+      true_label  = if (is.null(entry$true_label)) NA_character_ else entry$true_label,
       stringsAsFactors = FALSE
     )
   })
@@ -131,8 +134,9 @@ server <- function(input, output, session) {
   observe({
     df <- log_reader()
     if (nrow(df) == 0) return()
-    labels <- sprintf("%s — %s (%s)", df$timestamp, df$outcome,
-                       ifelse(is.na(df$top_classes), "", df$top_classes))
+    labels <- sprintf("%s — %s (%s)%s", df$timestamp, df$outcome,
+                       ifelse(is.na(df$top_classes), "", df$top_classes),
+                       ifelse(is.na(df$true_label), "", paste0(" — true: ", df$true_label)))
     choices <- stats::setNames(as.character(seq_len(nrow(df))), labels)
 
     current <- isolate(input$selected_request)
@@ -225,6 +229,15 @@ server <- function(input, output, session) {
     cat("Timestamp:   ", row$timestamp %||% "-", "\n")
     cat("From:        ", row$from %||% "-", "\n")
     cat("Outcome:     ", row$outcome %||% "-", "\n")
+    top_prediction <- if (is.na(row$top_classes) || row$top_classes == "") NA_character_ else
+      strsplit(row$top_classes, "\\|")[[1]][1]
+    cat("Predicted:   ", top_prediction %||% "-", "\n")
+    if (is.na(row$true_label)) {
+      cat("True label:   unknown (live request)\n")
+    } else {
+      cat("True label:  ", row$true_label,
+          if (!is.na(top_prediction) && top_prediction == row$true_label) "(correct)" else "(WRONG)", "\n")
+    }
     cat("Duration (s):", row$duration_s %||% NA, "\n")
     cat("Audio hash:  ", row$audio_hash %||% "-", "\n")
   })

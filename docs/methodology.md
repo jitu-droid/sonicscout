@@ -206,7 +206,9 @@ fixed the same way).
 features, 2s window) to 43.1% (Prompt 9, temporal features added, 4s
 window) -- a real gain in exactly the class this was aimed at**, while
 *C. biguttulus* stayed essentially flat (63.6% -> 62.4%) and overall
-accuracy moved only modestly (66.8% -> 68.5%). The two species remain
+accuracy moved only modestly (66.8% -> 68.5%, both scored over all 8
+classes including synthetic; see "Classifier results" below for the
+real-audio-only headline). The two species remain
 frequently confused with each other (pooled confusion matrix: 1708
 *C. brunneus* windows called *C. biguttulus*, 1082 the other way) --
 reduced, not resolved.
@@ -224,8 +226,9 @@ window length -- corroborated twice, independently, though neither effect
 individually clears this project's 95%-confidence bar taken alone.**
 Overall accuracy is nearly identical at both window lengths within a
 feature set (66.2% at 4s vs. 66.8% at 2s, spectral-only; 68.5% at 4s vs.
-68.4% at 2s, with temporal features) -- window length barely moves overall
-accuracy. Adding temporal features moves overall accuracy by roughly +2pp
+68.4% at 2s, with temporal features; every ablation arm is scored the same
+way, over all 8 classes including synthetic, so the paired comparisons
+stay like for like) -- window length barely moves overall accuracy. Adding temporal features moves overall accuracy by roughly +2pp
 at BOTH window lengths (paired deltas: +2.3pp at 4s, +1.7pp at 2s) -- two
 independent, same-direction measurements. For *C. brunneus* recall
 specifically: the temporal-feature effect is measured twice, independently,
@@ -272,25 +275,41 @@ delta" below; report that plainly too.
 ## Classifier results (Deliverable D)
 
 Real numbers from **repeated grouped k-fold cross-validation** (5 folds x
-10 repeats, 50 fold-evaluations total) on **real Orthoptera/Cicadidae
-audio vs. real ESC-50 ambient audio**, both passed through the same
-WhatsApp compression simulation (`docs/classifier_results.md`, regenerated
-fresh by `R/05_train.R`). This is the Prompt 8 replacement for a single
+10 repeats, 50 fold-evaluations total), all audio passed through the same
+WhatsApp compression simulation (`docs/classifier_results.md`, generated
+by `R/05_train.R`). This is the Prompt 8 replacement for a single
 train/test split -- see "The corpus-expansion, window-cap, and k-fold fix"
 below for why a single split was never defensible here.
 
-- **68.5% mean overall test accuracy (sd 6.5pp, 95% range 56.2% to
-  78.3%). 21.9% mean false-positive rate against real ambient audio (sd
-  8pp, range 8.1% to 39.2%).** *Cicada orni* is the strongest real class
-  (92.5% mean recall, 92.2% pooled precision). *C. brunneus* remains the
-  weakest real class (43.1% mean recall, up from 34% pre-temporal-features
-  -- see above) despite matching *C. biguttulus*'s source-recording count
-  (62.4% mean recall). See `docs/classifier_results.md` for the full
-  pooled confusion matrix and per-class recall-stability table.
-- **Baselines, so 68.5% means something:** the majority-class baseline
-  (always predicting the most common class) gets 27.1% accuracy on this
-  data (not 50% -- classes are imbalanced, ambient dominates); chance rate
-  across 8 classes is 12.5%. See `docs/operating_point.md`.
+**What the model is trained and scored on.** The training corpus is real
+Orthoptera/Cicadidae audio and real ESC-50 ambient audio, **plus 4 small
+synthetic classes** (`synthetic_chewing_pulses`,
+`synthetic_mosquito_wingbeat`, `synthetic_stridulation`,
+`synthetic_tone_plus_noise`, 4-5 clips each) **and 5 synthetic
+broadband-noise clips labelled ambient** -- so the model predicts 8
+classes. Earlier versions of this document described the evaluation as
+"real audio vs. real ambient" and reported a headline (68.5%) that also
+scored those synthetic test windows (240 of 14,280). A farmer's voice note
+is never synthetic, so **the headline is now scored on real audio only:
+the 3 real species and real ESC-50 ambient.**
+
+- **68.2% mean overall test accuracy on real audio (sd 6.5pp, 95% range
+  55.9% to 78.1%). 22.3% mean false-positive rate against real ambient
+  audio (sd 8.2pp, range 8.1% to 39.3%).** *Cicada orni* is the strongest
+  real class (92.5% mean recall, 92.2% pooled precision). *C. brunneus*
+  remains the weakest real class (43.1% mean recall, up from 34%
+  pre-temporal-features -- see above) despite matching *C. biguttulus*'s
+  source-recording count (62.4% mean recall). Real ambient recall: 77.7%.
+  Scoring the synthetic windows as well gives 68.5% / 21.9% -- they were
+  inflating the headline by 0.3pp. See `docs/classifier_results.md` for
+  both, the full pooled confusion matrix, and the per-class
+  recall-stability table.
+- **Baselines, so 68.2% means something:** the majority-class baseline
+  (always predicting the most common real class, *C. biguttulus*) gets
+  27.6% accuracy on real test windows. Classes differ in size, and ambient
+  is the *smallest* real class (18.7% of real test windows), not the
+  largest. Chance rate across the 4 real classes is 25%. See
+  `docs/operating_point.md`.
 - Chewing-sound classes are **deliberately excluded** from this classifier
   (a documented judgement call, not an oversight): the codec experiment
   already answers the chewing question at the signal level more directly,
@@ -309,7 +328,9 @@ split on a 5-recordings-per-species corpus, later shown (Prompt 7) to be
 one lucky draw from a distribution ranging roughly 10-92%; (3) 66.8%/22.3%,
 repeated grouped k-fold CV on an expanded ~45-recordings-per-species
 corpus with a cap on windows per recording (Prompt 8); (4) 68.5%/21.9%,
-this run, same corpus and method plus temporal features (Prompt 9). Each
+same corpus and method plus temporal features (Prompt 9). Stages 2-4 all
+scored synthetic test windows too; the same Prompt 9 model scored on real
+audio only -- the current headline -- is 68.2%/22.3%. Each
 stage is a harder or more nuanced number than the one before it, and each
 is more honest -- the flattering earlier figures were never actually true,
 just measured badly. All four are kept in `PROGRESS.md`'s history, clearly
@@ -317,11 +338,11 @@ labelled, for anyone auditing how the project's own numbers evolved.
 
 **Source-recording counts per real target class (the number that actually
 bounds every claim above):** *C. biguttulus* 45, *C. brunneus* 45, *Cicada
-orni* 45, ambient 145.
+orni* 45, ambient 140 real (plus 5 synthetic noise clips labelled ambient).
 
 ## Operating point: what a farmer would actually experience (Prompt 9, Part 2; Prompt 10, Part 2)
 
-**21.9% mean false-positive rate is the raw-argmax, WINDOW-level number --
+**22.3% mean false-positive rate is the raw-argmax, WINDOW-level number --
 whatever the model's top-1 prediction is on a single window, at any
 confidence -- and it is not a fixed property of the model, nor even the
 right unit to measure.** `R/06_predict.R`'s `predict_pest()` never scores
@@ -635,6 +656,11 @@ in this project.
   Every "real audio" number in this project used real *source* recordings
   run through a local FFmpeg simulation of WhatsApp's encoder -- not
   verified against what a real phone/WhatsApp client actually produces.
+- **The model is tuned to WhatsApp-compressed audio and misclassifies
+  uncompressed input**, so a raw-upload path would need its own model: on
+  14 held-out insect recordings it never trained on, it got 2 right from
+  the original-quality audio (calling 9 of them "ambient") but 6 right from
+  WhatsApp-compressed copies of the same recordings.
 - **The 8kHz Nyquist ceiling is real and permanent.** Any pest signature
   whose discriminative energy lives above 8kHz cannot be recovered from a
   WhatsApp voice note. Pests whose calls depend on higher-frequency content

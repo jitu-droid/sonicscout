@@ -160,13 +160,15 @@ a corpus this size, and for the full before/after story of fixing it.
   species). Real chewing-sound survivability is poor-to-moderate
   (0.342-0.892) and was measured under best-case contact-sensor capture,
   not realistic open-air conditions -- see `docs/codec_findings.md`.
-- **Classifier:** 68.5% mean test accuracy (sd 6.5pp, 95% range 56.2-78.3%),
-  21.9% mean false-positive rate against real ambient audio (sd 8pp,
-  range 8.1-39.2%), trained/evaluated on real pest audio vs. real ESC-50
-  ambient audio (45 source recordings per real target species, 145
-  ambient) -- see `docs/classifier_results.md`. Majority-class baseline is
-  27.1%, chance rate is 12.5% (8 classes) -- read the accuracy figure
-  against those, not against 50%.
+- **Classifier (real audio only):** 68.2% mean test accuracy (sd 6.5pp,
+  95% range 55.9-78.1%), 22.3% mean false-positive rate against real
+  ambient audio (sd 8.2pp, range 8.1-39.3%), scored on the 3 real species
+  and real ESC-50 ambient (45 source recordings per species, 140 ambient)
+  -- see `docs/classifier_results.md`. Majority-class baseline is 27.6%
+  (always guessing *C. biguttulus*), chance rate is 25% (4 classes) --
+  read the accuracy figure against those, not against 50%. The model is
+  also trained on 4 small synthetic classes; scoring those too gives
+  68.5%, which earlier versions of this README reported as the headline.
 - **Temporal features (syllable rate, inter-pulse intervals, envelope
   modulation spectrum, phrase structure) added to target the specific
   biological mechanism separating *C. biguttulus* from *C. brunneus*** --
@@ -179,7 +181,7 @@ a corpus this size, and for the full before/after story of fixing it.
   alone fully clears 95% confidence -- see `docs/methodology.md` and
   `docs/ablation_results.md` for the biology, citations, and the full
   decomposition.
-- **Operating point:** the raw 21.9% false-positive rate isn't deployable
+- **Operating point:** the raw 22.3% false-positive rate isn't deployable
   for a farmer-facing alert system, and it's also a WINDOW-level number --
   `predict_pest()` pools predictions across a clip's windows before
   deciding, and the operating point is chosen from that CLIP-level curve

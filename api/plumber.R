@@ -35,8 +35,12 @@ source(.locate_repo_file(file.path("R", "utils.R")))
 source(.locate_repo_file(file.path("R", "06_predict.R")))  # brings in predict_pest(), format_reply()
 
 MIN_CLIP_SECONDS <- 3
-REQUEST_LOG_PATH <- file.path(.repo_root, "logs", "requests.jsonl")
-REQUEST_AUDIO_DIR <- file.path(.repo_root, "logs", "audio")
+# SONICSCOUT_LOG_DIR lets the test suite log somewhere disposable instead of
+# the real logs/requests.jsonl that the dashboard and a live demo read --
+# mock test requests used to pile up there. Unset in normal use.
+.log_dir <- Sys.getenv("SONICSCOUT_LOG_DIR", file.path(.repo_root, "logs"))
+REQUEST_LOG_PATH <- file.path(.log_dir, "requests.jsonl")
+REQUEST_AUDIO_DIR <- file.path(.log_dir, "audio")
 MODEL_PATH_ABS <- file.path(.repo_root, "models", "classifier.rds")
 
 # ---- Startup validation (Prompt 11, Part 2a) --------------------------------

@@ -1219,13 +1219,17 @@ by hand into a slide.
 | Codec survivability, *C. brunneus* | 0.956 | -- | 5 recordings | `docs/codec_findings.md` |
 | Codec survivability, *Cicada orni* | 0.972 | -- | 5 recordings | `docs/codec_findings.md` |
 | Codec survivability, real chewing sounds (range across 5 species) | 0.342 to 0.892 | -- | 1-5 recordings/species | `docs/codec_findings.md` |
-| Classifier overall test accuracy (window-level, argmax) | 68.5% | sd 6.5pp, range 56.2-78.3% | 50 fold-evaluations | `docs/classifier_results.md` |
-| Classifier FPR vs. ambient (window-level, argmax, no threshold) | 21.9% | sd 8pp, range 8.1-39.2% | 50 fold-evaluations | `docs/classifier_results.md` |
+| Classifier overall test accuracy, real audio only (window-level, argmax) | 68.2% | sd 6.5pp, range 55.9-78.1% | 50 fold-evaluations | `docs/classifier_results.md` |
+| Classifier FPR vs. real ambient, real audio only (window-level, argmax, no threshold) | 22.3% | sd 8.2pp, range 8.1-39.3% | 50 fold-evaluations | `docs/classifier_results.md` |
+| (Superseded basis, for reference: accuracy / FPR scoring all 8 classes incl. synthetic) | 68.5% / 21.9% | sd 6.5pp / 8pp | 50 fold-evaluations | `docs/classifier_results.md` |
 | Recall, *C. biguttulus* | 62.4% | sd 12.9pp, range 37.8-83.1% | 50 fold-evaluations, 45 source recordings | `docs/classifier_results.md` |
 | Recall, *C. brunneus* | 43.1% | sd 13.5pp, range 18.9-68.4% | 50 fold-evaluations, 45 source recordings | `docs/classifier_results.md` |
 | Recall, *Cicada orni* | 92.5% | sd 8pp, range 74.9-100% | 50 fold-evaluations, 45 source recordings | `docs/classifier_results.md` |
-| Majority-class baseline accuracy | 27.1% | -- | full corpus | `docs/operating_point.md` |
-| Chance rate (8 classes) | 12.5% | -- | -- | `docs/operating_point.md` |
+| Recall, real ambient | 77.7% | sd 8.2pp, range 60.7-91.9% | 50 fold-evaluations, 140 source recordings | `docs/classifier_results.md` |
+| Majority-class baseline accuracy (real audio; always *C. biguttulus*) | 27.6% | -- | 14040 real test windows | `docs/operating_point.md` |
+| Chance rate (4 real classes) | 25% | -- | -- | `docs/operating_point.md` |
+| Held-out insect recordings, WhatsApp-compressed: correct top-1 | 6 of 14 | -- | 14 recordings never used in training | `R/fetch_heldout_insectset.R` |
+| Same held-out recordings, uncompressed: correct top-1 | 2 of 14 (9 called ambient) | -- | 14 recordings | `docs/methodology.md` limitations |
 | Compression delta, codec-only | -1.1% | sd 4pp, range -8.8% to +6.0% | 50 fold-evaluations | `docs/compression_delta.md` |
 | Compression delta, full-fidelity | +2.8% | sd 5pp, range -6.2% to +13.0% | 50 fold-evaluations | `docs/compression_delta.md` |
 | Bandwidth component of compression delta | +3.9% | sd 5.4pp, range -6.5% to +13.1% | 50 fold-evaluations | `docs/compression_delta.md` |
@@ -1242,9 +1246,13 @@ by hand into a slide.
 | Per-species detection rate at threshold 0.45 (clip-level): *C. biguttulus* / *C. brunneus* / *Cicada orni* | 70.7% / 58.7% / 88.7% | -- | 2750 clip-level predictions | `docs/operating_point.md` |
 | Windows per clip after energy gating (compressed arm) | median 2 | min 1, p25 2, p75 6, max 20 | 299 source recordings | `docs/operating_point.md` |
 | Real source recordings per target species | 45 each | -- | -- | `docs/classifier_results.md`, `data/raw/manifest.csv` |
-| Real ambient source recordings | 145 | -- | -- | `docs/classifier_results.md` |
+| Real ambient source recordings | 140 (+5 synthetic noise clips labelled ambient) | -- | -- | `docs/classifier_results.md` |
 | Window length / hop | 4.0s / 2.0s | -- | -- | `R/utils.R` |
 | K-fold CV design | 5 folds x 10 repeats | -- | 50 fold-evaluations total | `R/05_train.R` |
+
+The compression-delta and ablation rows are paired comparisons scored over
+all 8 classes (synthetic included) in every arm, so they stay like for like;
+they were not re-scored on real audio only.
 
 ---
 
@@ -1389,3 +1397,39 @@ and `docs/twilio_setup.md` written). The exact checklists for both were
 handed to Jitu directly in chat. Part 4 (freeze) and the rest of Part 1c/2c
 are blocked on real data from those two physical steps and have not been
 started.
+
+---
+
+## Session 8 — Demo audit: real-only headline, held-out demo audio
+
+An audit of the dashboard's demo entries found four problems, all fixed:
+
+- **The headline mixed synthetic and real audio.** The model predicts 8
+  classes (4 real, 4 synthetic, plus 5 synthetic noise clips labelled
+  ambient). The 68.5% headline scored synthetic test windows too. Scored
+  on real audio only it is **68.2%** (FPR 22.3%, majority baseline 27.6%,
+  chance 25% for 4 classes). `R/05_train.R` now leads its report with the
+  real-only figures and can rebuild the report from saved predictions
+  without retraining (`--report-only`); the rebuilt 8-class section matches
+  the old report exactly. Two wrong statements corrected: the evaluation
+  was not "real vs. real ambient" only, and ambient does not dominate (it
+  is the smallest real class).
+- **Demo audio was uncompressed** while the model is trained on
+  WhatsApp-compressed audio, so real species were misread as ambient.
+  Seeding now compresses first. Added as a limitation: a raw-upload path
+  would need its own model (held-out evidence: 2 of 14 right uncompressed,
+  6 of 14 compressed).
+- **Demo audio was training audio.** All 45 downloaded recordings per
+  species were used in training, and the codec-reference clips are WAV
+  copies of them. `R/fetch_heldout_insectset.R` downloaded 5 new
+  recordings per species from iNaturalist observations not used in
+  training (manifest source `InsectSet459-heldout`, excluded from
+  training by `R/03_preprocess.R`), and wrote one per species to
+  `demo_clips/` for playing aloud. Seeding uses held-out clips only and
+  records each entry's true label, shown on the dashboard.
+- **The log piled up.** Re-seeding now replaces only earlier demo-seed
+  entries, and the webhook tests log to a temp directory
+  (`SONICSCOUT_LOG_DIR`) instead of the real `logs/requests.jsonl`.
+
+Seeded demo, held-out and compressed: 6 of 12 right (*Cicada orni* 2/3,
+*C. biguttulus* 2/3, ambient 2/3, *C. brunneus* 0/3).

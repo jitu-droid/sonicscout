@@ -125,6 +125,11 @@ collect_labeled_sources <- function() {
     # in scope; they remain fully analysed in the codec experiment above.
     raw_manifest <- raw_manifest[raw_manifest$source != "USDA-ARS-soundlibrary", ]
 
+    # Held-out InsectSet459 recordings (R/fetch_heldout_insectset.R) exist
+    # precisely so there is audio the model has NEVER seen, for honest demo
+    # seeding. They must never enter training, however this script is re-run.
+    raw_manifest <- raw_manifest[raw_manifest$source != "InsectSet459-heldout", ]
+
     raw_manifest$is_ambient <- raw_manifest$source == "ESC-50"
     # Cap per LABEL (species), not per source -- grouping by `source` would
     # lump all InsectSet459 species into one shared cap (a real bug found

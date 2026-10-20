@@ -172,7 +172,9 @@ main <- function(cv_predictions_path = CV_PREDICTIONS_PATH, results_path = RESUL
   # Majority-class baseline and chance rate (Part 2 asks this accompany
   # every accuracy figure -- computed here once, referenced by
   # docs/methodology.md rather than recomputed by hand in multiple places).
-  class_counts <- table(preds_all$label)
+  # Real audio only, like everything else in this script -- computing this
+  # over preds_all used to fold the synthetic classes in (27.1%, 8 classes).
+  class_counts <- table(preds_window$label)
   majority_class <- names(class_counts)[which.max(class_counts)]
   majority_baseline_acc <- max(class_counts) / sum(class_counts)
   chance_rate <- 1 / length(class_counts)
@@ -315,13 +317,14 @@ main <- function(cv_predictions_path = CV_PREDICTIONS_PATH, results_path = RESUL
     "",
     "## Baselines (read every accuracy figure in this project against these)",
     "",
-    sprintf("- **Majority-class baseline**: always predicting `%s` (the most common class) gets ",
+    sprintf("- **Majority-class baseline**: always predicting `%s` (the most common real class) gets ",
             majority_class),
-    sprintf("  **%s** accuracy on this data -- not %s, because classes are imbalanced ",
-            fmt_pct(majority_baseline_acc), "50%"),
-    "  (ambient dominates the corpus). Any classifier accuracy figure below this is worse than",
-    "  guessing the majority class every time.",
-    sprintf("- **Chance rate** (%d classes, uniform guessing): **%s**.",
+    sprintf("  **%s** accuracy on real test windows. Classes differ in size, and ambient is the ",
+            fmt_pct(majority_baseline_acc)),
+    sprintf("  SMALLEST real class (%s of real test windows), not the largest. Any classifier ",
+            fmt_pct(class_counts[["ambient"]] / sum(class_counts))),
+    "  accuracy figure below this is worse than guessing the majority class every time.",
+    sprintf("- **Chance rate** (%d real classes, uniform guessing): **%s**.",
             length(class_counts), fmt_pct(chance_rate)),
     "",
     "## Window-level vs. clip-level PR curves, side by side",

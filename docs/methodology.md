@@ -650,17 +650,27 @@ in this project.
 
 ## Limitations (read this before quoting any number above)
 
-- **The single biggest open gap: no genuine WhatsApp-exported audio has
-  ever been tested against the local compression simulation**, despite the
-  manual procedure for doing so being documented since the first session.
-  Every "real audio" number in this project used real *source* recordings
-  run through a local FFmpeg simulation of WhatsApp's encoder -- not
-  verified against what a real phone/WhatsApp client actually produces.
-- **The model is tuned to WhatsApp-compressed audio and misclassifies
-  uncompressed input**, so a raw-upload path would need its own model: on
-  14 held-out insect recordings it never trained on, it got 2 right from
-  the original-quality audio (calling 9 of them "ambient") but 6 right from
-  WhatsApp-compressed copies of the same recordings.
+- **The real voice-note path is more destructive than the simulation
+  every number here rests on.** A real round trip (played aloud, recorded
+  as a WhatsApp voice note; `docs/roundtrip_validation.md`) confirms the
+  8 kHz ceiling, but fails the pre-registered simulation-fidelity bar for
+  both real species: the speaker, room and phone microphone reshape the
+  spectrum in ways a codec-only simulation cannot model. Every "real audio"
+  number in this project is real *source* recordings run through that
+  codec simulation -- valid as a codec measurement, not as a deployment
+  number. Closing the gap needs an acoustic-path model or training audio
+  recorded through real voice notes.
+- **The model only uses content below 8 kHz.** `predict_pest()` resamples
+  every input to 16 kHz mono, the rate it is trained at, so uncompressed
+  audio is handled like a voice note without the codec: on 14 held-out
+  insect recordings it never trained on, it got 6 right from
+  original-quality audio and 6 from WhatsApp-compressed copies (they
+  disagree on 4 clips each way), matching the cross-validated codec-only
+  comparison (`docs/compression_delta.md`). A raw-upload path would need
+  its own model only to use content above 8 kHz. (An earlier version of
+  this line said the model misclassifies uncompressed input -- 2 of 14 vs.
+  6 of 14. That came from a sample-rate bug in `predict_pest()`, since
+  fixed; see PROGRESS.md.)
 - **The 8kHz Nyquist ceiling is real and permanent.** Any pest signature
   whose discriminative energy lives above 8kHz cannot be recovered from a
   WhatsApp voice note. Pests whose calls depend on higher-frequency content

@@ -53,13 +53,14 @@
 # received/attachment/ or received/voicenote/ contains anything. Applied
 # identically to both experiment arms -- one pre-registered bar, not two.)
 #
-#   Encoding parameters (informational, always reported): sample rate is
-#   expected at 16000Hz, channels at 1 (mono), IF the arm is transcoded at
-#   all -- the attachment arm may instead show the original's own
-#   44100Hz/stereo-or-mono parameters unchanged, which is not itself a
-#   failure, just evidence of a passthrough (see above). Bitrate, when
-#   transcoded, is expected in the 12-24kbps range (WhatsApp's Opus VOIP
-#   profile targets ~16kbps but is VBR).
+#   Encoding parameters (informational, always reported): channels expected
+#   at 1 (mono), bitrate, when transcoded, in the 12-24kbps range (WhatsApp's
+#   Opus VOIP profile targets ~16kbps but is VBR). The attachment arm may
+#   instead show the original's own parameters, which is not itself a
+#   failure, just evidence of a passthrough (see above). (Added after the
+#   first real run: ffprobe reports 48000Hz for every Opus file, since Opus
+#   always decodes at 48kHz, so the assumed 16kHz / 8kHz ceiling is checked
+#   by measuring energy above 8kHz instead -- see energy_share_above_8k().)
 #
 #   Verdict per file per arm, based on two numbers:
 #     - REAL-vs-SIMULATED spectral correlation (Pearson, on the two
@@ -144,6 +145,23 @@ EXPERIMENTS <- list(
   )
 )
 
+# Every spectral comparison happens at ONE sample rate: 16 kHz mono, the
+# rate the classifier is trained and served at. Before this was added, the
+# original was analysed at its own 44.1 kHz, the simulation at 16 kHz and the
+# real voice note at 48 kHz (Opus decodes at 48 kHz) -- different bandwidths
+# and FFT bin widths under per-spectrum peak normalisation, which produced
+# meaningless per-band ratios (one band at 1282%). Found alongside the same
+# class of bug in predict_pest() (R/06_predict.R).
+ANALYSIS_SAMPLE_RATE <- WHATSAPP_SAMPLE_RATE
+
+# A file with almost all its energy above 8 kHz (the 10 kHz control tone:
+# ~0% below) has nothing left to compare at 16 kHz, so it gets no spectral
+# verdict -- its job is answered by energy_share_above_8k() instead. (First
+# set at 50%, which also excluded the broadband-noise control; that file
+# still has ~39% of its energy below 8 kHz, plenty to compare, so the bar
+# was lowered to target only the case it exists for.)
+MIN_SHARE_BELOW_8K_FOR_VERDICT <- 0.1
+
 CORR_PASS_THRESHOLD    <- 0.90
 CORR_CAUTION_THRESHOLD <- 0.75
 BAND_PASS_THRESHOLD    <- 0.10
@@ -207,14 +225,32 @@ probe_encoding_params <- function(path) {
 
 # ---- Core per-file analysis --------------------------------------------------
 
-#' Decode any audio file (any container) to a temp WAV via ffmpeg, matching
-#' how wa_read()/the rest of this pipeline handles non-WAV input.
-decode_to_wav <- function(path, out_path = tempfile(fileext = ".wav")) {
+#' Decode any audio file (any container) to a temp WAV via ffmpeg. With
+#' `sample_rate`, also resample (ffmpeg's filtered resampler) and downmix to
+#' mono -- see ANALYSIS_SAMPLE_RATE below for why every comparison uses this.
+decode_to_wav <- function(path, out_path = tempfile(fileext = ".wav"), sample_rate = NULL) {
   ffmpeg_bin <- Sys.which("ffmpeg")
   if (ffmpeg_bin == "") stop("ffmpeg not found on PATH")
-  status <- system2(ffmpeg_bin, args = c("-y", "-loglevel", "error", "-i", path, out_path))
+  args <- c("-y", "-loglevel", "error", "-i", shQuote(path))
+  if (!is.null(sample_rate)) args <- c(args, "-ar", as.character(sample_rate), "-ac", "1")
+  status <- system2(ffmpeg_bin, args = c(args, shQuote(out_path)))
   if (status != 0) stop("ffmpeg failed to decode ", path)
   out_path
+}
+
+#' Share of a file's spectral power above 8 kHz, at its NATIVE decode rate.
+#' This is the direct check of the "WhatsApp cuts everything above 8 kHz"
+#' assumption -- ffprobe can't answer it, because Opus always decodes at
+#' 48 kHz whatever bandwidth was actually encoded.
+energy_share_above_8k <- function(path) {
+  wav <- decode_to_wav(path)
+  on.exit(unlink(wav), add = TRUE)
+  w <- tuneR::readWave(wav)
+  x <- as.numeric(if (w@stereo) (w@left + w@right) / 2 else w@left)
+  power <- Mod(stats::fft(x - mean(x)))^2
+  freq <- (seq_along(x) - 1) * w@samp.rate / length(x)
+  half <- freq <= w@samp.rate / 2
+  sum(power[half & freq > 8000]) / sum(power[half])
 }
 
 analyze_one_pair <- function(row, simulated_dir = SIMULATED_DIR) {
@@ -226,14 +262,19 @@ analyze_one_pair <- function(row, simulated_dir = SIMULATED_DIR) {
   simulated_path <- file.path(simulated_dir, paste0("simulated_", row$id, "_", row$label, ".wav"))
   simulate_whatsapp_compression(row$sent_path, simulated_path)
 
-  received_wav_tmp <- decode_to_wav(row$received_path)
-  on.exit(unlink(received_wav_tmp), add = TRUE)
+  # All three at ANALYSIS_SAMPLE_RATE, mono -- see its definition.
+  orig_wav_tmp <- decode_to_wav(row$sent_path, sample_rate = ANALYSIS_SAMPLE_RATE)
+  received_wav_tmp <- decode_to_wav(row$received_path, sample_rate = ANALYSIS_SAMPLE_RATE)
+  sim_wav_tmp <- decode_to_wav(simulated_path, sample_rate = ANALYSIS_SAMPLE_RATE)
+  on.exit(unlink(c(orig_wav_tmp, received_wav_tmp, sim_wav_tmp)), add = TRUE)
 
   params <- probe_encoding_params(row$received_path)
+  params$above_8k_original <- energy_share_above_8k(row$sent_path)
+  params$above_8k_received <- energy_share_above_8k(row$received_path)
 
-  orig_spec <- compute_mean_spectrum(row$sent_path)
+  orig_spec <- compute_mean_spectrum(orig_wav_tmp)
   real_spec <- compute_mean_spectrum(received_wav_tmp)
-  sim_spec  <- compute_mean_spectrum(simulated_path)
+  sim_spec  <- compute_mean_spectrum(sim_wav_tmp)
 
   real_retention <- band_retention_ratios(orig_spec, real_spec)
   sim_retention  <- band_retention_ratios(orig_spec, sim_spec)
@@ -260,9 +301,13 @@ analyze_one_pair <- function(row, simulated_dir = SIMULATED_DIR) {
     simulated_retention_ratio = sim_retention$retention_ratio,
     abs_divergence = abs(real_retention$retention_ratio - sim_retention$retention_ratio)
   )
+  # Nothing above 8 kHz exists at the 16 kHz analysis rate.
+  band_compare <- band_compare[band_compare$band != ">8kHz", ]
   mean_band_divergence <- mean(band_compare$abs_divergence, na.rm = TRUE)
 
-  verdict <- if (fidelity_similarity$pearson_correlation >= CORR_PASS_THRESHOLD &&
+  verdict <- if (1 - params$above_8k_original < MIN_SHARE_BELOW_8K_FOR_VERDICT) {
+    "N/A (most of this file's energy is above 8 kHz; see the >8 kHz columns instead)"
+  } else if (fidelity_similarity$pearson_correlation >= CORR_PASS_THRESHOLD &&
                  !is.na(mean_band_divergence) && mean_band_divergence <= BAND_PASS_THRESHOLD) {
     "PASS"
   } else if (fidelity_similarity$pearson_correlation >= CORR_CAUTION_THRESHOLD &&
@@ -292,10 +337,14 @@ render_roundtrip_panel <- function(result, experiment_key, figures_dir = FIGURES
   out_path <- file.path(figures_dir, sprintf("roundtrip_%s_%s_%s.png", experiment_key, result$id, result$label))
   ensure_dir(figures_dir)
 
-  w_orig <- tuneR::readWave(result$sent_path)
-  w_sim  <- tuneR::readWave(result$simulated_path)
-  real_wav_tmp <- decode_to_wav(result$received_path)
-  w_real <- tuneR::readWave(real_wav_tmp)
+  # Same 16 kHz mono view the numbers are computed from.
+  tmp <- c(decode_to_wav(result$sent_path, sample_rate = ANALYSIS_SAMPLE_RATE),
+           decode_to_wav(result$simulated_path, sample_rate = ANALYSIS_SAMPLE_RATE),
+           decode_to_wav(result$received_path, sample_rate = ANALYSIS_SAMPLE_RATE))
+  on.exit(unlink(tmp), add = TRUE)
+  w_orig <- tuneR::readWave(tmp[1])
+  w_sim  <- tuneR::readWave(tmp[2])
+  w_real <- tuneR::readWave(tmp[3])
 
   grDevices::png(out_path, width = 2100, height = 650, res = 150)
   on.exit(grDevices::dev.off(), add = TRUE)
@@ -371,12 +420,20 @@ render_experiment_section <- function(run) {
     knitr_table_or_fallback(dplyr::bind_rows(lapply(run$ok_results, function(r) tibble::tibble(
       id = r$id, label = r$label,
       codec = r$params$codec_name,
-      sample_rate_hz = r$params$sample_rate_hz,
+      decoded_sample_rate_hz = r$params$sample_rate_hz,
       channels = r$params$channels,
       bitrate_kbps = round(r$params$bitrate_kbps, 1),
-      assumed_sample_rate_hz = WHATSAPP_SAMPLE_RATE,
-      assumed_bitrate_kbps = WHATSAPP_BITRATE_KBPS
+      energy_above_8kHz_original = fmt_pct2(r$params$above_8k_original),
+      energy_above_8kHz_received = fmt_pct2(r$params$above_8k_received)
     )))),
+    "",
+    paste0("`decoded_sample_rate_hz` is what ffprobe reports; Opus always decodes at 48000 Hz whatever ",
+           "bandwidth was encoded, so it can't show the assumed ", WHATSAPP_SAMPLE_RATE, " Hz / 8 kHz ",
+           "ceiling. The two `energy_above_8kHz` columns measure that directly, at each file's native ",
+           "rate. Assumed WhatsApp parameters: ", WHATSAPP_SAMPLE_RATE, " Hz, ", WHATSAPP_BITRATE_KBPS, " kbps."),
+    "",
+    paste0("Everything below is compared at ", ANALYSIS_SAMPLE_RATE, " Hz mono -- original, simulated ",
+           "and real alike -- the rate the classifier is trained and served at."),
     "",
     "### Per-file results",
     "",
@@ -400,7 +457,8 @@ render_experiment_section <- function(run) {
       "",
       sprintf("**Verdict: %s**", r$verdict),
       "",
-      sprintf("![Original / simulated / real spectrograms](figures/roundtrip_%s_%s_%s.png)", exp$key, r$id, r$label),
+      sprintf("![Original / simulated / real spectrograms, all at %d Hz](figures/roundtrip_%s_%s_%s.png)",
+              ANALYSIS_SAMPLE_RATE, exp$key, r$id, r$label),
       ""
     ))),
     ""

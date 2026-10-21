@@ -87,7 +87,14 @@ predict_pest <- function(file_path, model_path = MODEL_PATH, threshold = LOW_CON
   }
   bundle <- readRDS(model_path)
 
-  wave <- whatsappaudioR::wa_read(file_path)
+  # Resample to the TRAINING rate (16 kHz mono -- R/03_preprocess.R cuts
+  # training windows from WhatsApp-simulated audio at WHATSAPP_SAMPLE_RATE)
+  # before anything else. Found as a real train/serve bug: this used to
+  # feature-extract at whatever rate the file decoded to (48 kHz for an
+  # Opus voice note or MP3), and a real WhatsApp voice note of a cicada
+  # came out "ambient 46%" -- "cicada_orni 90%" once resampled to 16 kHz.
+  # Regression test: tests/testthat/test-06-predict.R.
+  wave <- whatsappaudioR::wa_read(file_path, sample_rate = WHATSAPP_SAMPLE_RATE, mono = TRUE)
   trimmed <- trim_silence(wave@left, wave@samp.rate)
   windows <- window_signal(trimmed, wave@samp.rate)
   keep <- gate_silent_windows(windows)

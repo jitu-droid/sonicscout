@@ -16,12 +16,12 @@
 #      recording fetched for training was used in training). If a class has
 #      no held-out clip, this script says so and seeds nothing for it -- it
 #      never falls back to a training clip.
-#   2. WHATSAPP-COMPRESSED. The model is trained on audio passed through
-#      simulate_whatsapp_compression(); real voice notes arrive already
-#      compressed. Seeding the uncompressed original (as this script used
-#      to) made the demo misclassify real species as ambient. Each clip is
-#      compressed first, and the COMPRESSED copy is what gets predicted on
-#      and archived for the dashboard.
+#   2. WHATSAPP-COMPRESSED. Real voice notes arrive compressed, so each
+#      clip is compressed first and the COMPRESSED copy is what gets
+#      predicted on and archived -- the demo shows what deployment sees.
+#      (This script used to seed the 44.1 kHz originals, and real species
+#      came out "ambient". That was first blamed on the missing compression;
+#      the real cause was a sample-rate bug in predict_pest(), since fixed.)
 #   3. REPLACE, DON'T APPEND -- AND NEVER TOUCH REAL ENTRIES. Re-seeding
 #      removes only previous `from == "demo-seed"` entries (and their audio
 #      files, if nothing else references them). Webhook entries, and any

@@ -3459,7 +3459,7 @@
     },
     "whatsappaudioR": {
       "Package": "whatsappaudioR",
-      "Version": "0.1.0",
+      "Version": "0.2.0",
       "Source": "unknown",
       "Title": "Convert Compressed Mobile Voice Notes into Tidy Spectrogram Data",
       "Authors@R": "person(\"SonicScout\", \"Team\", email = \"adhikaryanirjit05@gmail.com\", role = c(\"aut\", \"cre\"))",

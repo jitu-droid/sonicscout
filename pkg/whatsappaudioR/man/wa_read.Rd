@@ -4,10 +4,16 @@
 \alias{wa_read}
 \title{Read a compressed voice-note audio file into a Wave object}
 \usage{
-wa_read(path)
+wa_read(path, sample_rate = NULL, mono = FALSE)
 }
 \arguments{
 \item{path}{Path to an audio file (\code{.opus}, \code{.ogg}, \code{.wav}, \code{.mp3}, \code{.m4a}).}
+
+\item{sample_rate}{Optional target sample rate in Hz. \code{NULL} (default)
+keeps the file's own rate.}
+
+\item{mono}{If \code{TRUE}, downmix to one channel (averaging channels).
+Default \code{FALSE} keeps the file's channels.}
 }
 \value{
 A \link[tuneR:Wave-class]{tuneR::Wave} object.
@@ -35,9 +41,19 @@ on your machine, switching back to \code{av::av_audio_convert()} would avoid
 the subprocess-spawn overhead.
 }
 
+\section{Sample rate}{
+By default the audio comes back at whatever rate the file decodes to --
+48 kHz for Opus, usually 44.1 or 48 kHz for MP3/WAV. A model trained at
+one sample rate must be fed that same rate: spectral features computed
+over a different bandwidth are not comparable. Pass \code{sample_rate} (and
+\code{mono = TRUE}) to have ffmpeg resample on decode, using its filtered
+resampler (with anti-aliasing), not naive decimation.
+}
+
 \examples{
 \dontrun{
 w <- wa_read("voice_note.opus")
+w16 <- wa_read("voice_note.opus", sample_rate = 16000, mono = TRUE)
 }
 
 }

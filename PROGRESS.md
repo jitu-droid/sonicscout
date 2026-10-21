@@ -1229,7 +1229,9 @@ by hand into a slide.
 | Majority-class baseline accuracy (real audio; always *C. biguttulus*) | 27.6% | -- | 14040 real test windows | `docs/operating_point.md` |
 | Chance rate (4 real classes) | 25% | -- | -- | `docs/operating_point.md` |
 | Held-out insect recordings, WhatsApp-compressed: correct top-1 | 6 of 14 | -- | 14 recordings never used in training | `R/fetch_heldout_insectset.R` |
-| Same held-out recordings, uncompressed: correct top-1 | 2 of 14 (9 called ambient) | -- | 14 recordings | `docs/methodology.md` limitations |
+| Same held-out recordings, uncompressed (resampled to 16 kHz): correct top-1 | 6 of 14 | -- | 14 recordings | `docs/methodology.md` limitations |
+| Real WhatsApp voice-note round trip, simulation fidelity (Pearson, real vs. simulated) | 0.30 *C. biguttulus*, 0.18 *Cicada orni* (FAIL; bar 0.75) | -- | 1 recording each | `docs/roundtrip_validation.md` |
+| Real voice notes: energy above 8 kHz | at most 0.6% (8 kHz ceiling confirmed) | -- | 4 voice notes | `docs/roundtrip_validation.md` |
 | Compression delta, codec-only | -1.1% | sd 4pp, range -8.8% to +6.0% | 50 fold-evaluations | `docs/compression_delta.md` |
 | Compression delta, full-fidelity | +2.8% | sd 5pp, range -6.2% to +13.0% | 50 fold-evaluations | `docs/compression_delta.md` |
 | Bandwidth component of compression delta | +3.9% | sd 5.4pp, range -6.5% to +13.1% | 50 fold-evaluations | `docs/compression_delta.md` |
@@ -1418,7 +1420,9 @@ An audit of the dashboard's demo entries found four problems, all fixed:
   WhatsApp-compressed audio, so real species were misread as ambient.
   Seeding now compresses first. Added as a limitation: a raw-upload path
   would need its own model (held-out evidence: 2 of 14 right uncompressed,
-  6 of 14 compressed).
+  6 of 14 compressed). **Superseded in Session 9:** the misreading was a
+  sample-rate bug in `predict_pest()`, not compression; fixed, the same
+  test gives 6 of 14 both ways.
 - **Demo audio was training audio.** All 45 downloaded recordings per
   species were used in training, and the codec-reference clips are WAV
   copies of them. `R/fetch_heldout_insectset.R` downloaded 5 new
@@ -1433,3 +1437,56 @@ An audit of the dashboard's demo entries found four problems, all fixed:
 
 Seeded demo, held-out and compressed: 6 of 12 right (*Cicada orni* 2/3,
 *C. biguttulus* 2/3, ambient 2/3, *C. brunneus* 0/3).
+
+---
+
+## Session 9 — Train/serve sample-rate bug in `predict_pest()`
+
+**The bug.** `predict_pest()` extracted features at whatever rate
+`wa_read()` decoded the input to -- 48 kHz for an Opus voice note or MP3,
+usually 44.1 kHz for a WAV -- while the model is trained on 16 kHz mono
+windows (cut from WhatsApp-simulated audio in `R/03_preprocess.R`).
+Features computed over a different bandwidth aren't comparable, and the
+model leaned towards "ambient".
+
+**How it was found.** Jitu recorded the held-out `demo_clips/cicada_orni.wav`
+as a real WhatsApp voice note: "ambient 46%" as `.ogg`, "cicada_orni 90%"
+after converting the same file to 16 kHz mono WAV with ffmpeg. Same for a
+phone-recorder MP3 (ambient 47% -> cicada 91%) and the round-trip voice
+note `received_02` (ambient 57% -> cicada 64%).
+
+**Fix.** `wa_read()` (whatsappaudioR 0.2.0) gained optional `sample_rate`
+and `mono` arguments (ffmpeg's filtered resampler, the same one the
+training pipeline uses; a WAV already at the target is read untouched).
+`predict_pest()` now reads every input at `WHATSAPP_SAMPLE_RATE`, mono.
+Regression test `tests/testthat/test-06-predict.R`: a 48 kHz Opus file and
+its 16 kHz WAV copy must agree -- it failed before the fix (ambient vs.
+cicada_orni, probabilities 0.55 apart) and passes after.
+
+**What it affected, rechecked:**
+
+- **Real voice notes** (after the fix, original files): held-out cicada
+  WhatsApp voice note cicada_orni 90%; phone-recorder MP3 cicada_orni 91%;
+  round trip `received_01` (*C. biguttulus*) ambient 30% (low confidence,
+  wrong), `received_02` (*Cicada orni*) cicada_orni 64%, `received_03`
+  (10 kHz tone) ambient 64%, `received_04` (noise) ambient 47%.
+- **"The model misclassifies uncompressed input" (Session 8) was this
+  bug.** Re-run on the 14 held-out recordings: 6 right uncompressed (now
+  resampled to 16 kHz) and 6 right compressed, not 2 vs. 6. The
+  limitations line in `docs/methodology.md` is rewritten. The Session 8
+  investigation that blamed missing compression for the demo's "ambient"
+  answers was the same bug.
+- **Round-trip validation** compared spectra at three different rates
+  (original 44.1 kHz, simulation 16 kHz, real voice note 48 kHz). Now all
+  at 16 kHz mono; `docs/roundtrip_validation.md` regenerated and its
+  overall verdict written: the 8 kHz ceiling is confirmed, but the real
+  voice-note path FAILS the pre-registered fidelity bar for both real
+  species, because the speaker, room and phone microphone reshape the
+  spectrum. Prior codec/classifier numbers stand as codec measurements,
+  not as deployment numbers (README, methodology and codec findings say so).
+- **Webhook:** affected (every live voice note is 48 kHz Opus) and fixed by
+  the same change; no real live request had been logged yet.
+- **Not affected:** the held-out demo seeding (16 kHz mono input) -- all
+  12 seeded predictions re-run identical, still 6 of 12 right; all
+  cross-validation numbers (computed on 16 kHz training windows); the
+  dashboard (displays audio, never predicts).

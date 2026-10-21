@@ -197,8 +197,12 @@ a corpus this size, and for the full before/after story of fixing it.
   decomposition. Adding temporal features did NOT narrow these deltas
   (hypothesized that envelope structure would survive compression better
   than spectral detail; not supported by this run).
-- None of the above has been tested against a genuine WhatsApp-exported
-  voice note end to end; see `docs/methodology.md`'s limitations section.
+- **Real WhatsApp round trip:** a real voice note (played aloud and
+  recorded in WhatsApp) confirms the 8 kHz ceiling, but the room, speaker
+  and phone microphone change the spectrum far more than the codec
+  simulation above models -- it fails the pre-registered fidelity bar, so
+  the numbers above are codec measurements, not deployment accuracy. See
+  `docs/roundtrip_validation.md`.
 
 ## Licence
 

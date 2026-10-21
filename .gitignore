@@ -11,6 +11,9 @@ renv/sandbox/
 # credentials
 .env
 .Renviron
+tools/
+data/codec_experiment/real_roundtrip/_to_delete/
+data/codec_experiment/real_roundtrip/demo_voicenotes/
 
 # large / regenerable data (keep dir structure via .gitkeep, not contents)
 data/raw/*

@@ -29,10 +29,11 @@ the signal processing math.
 ## Architecture
 
 ```
-Farmer's phone --(WhatsApp voice note, Opus/Ogg, 16kHz, ~16kbps)--> Twilio Sandbox
+Farmer's phone --(WhatsApp voice note, Opus/Ogg, 16kHz, ~16kbps)--> Meta WhatsApp Cloud API
+                                                                     (or Twilio Sandbox)
                                                                           |
                                                                           v
-                                                              api/plumber.R webhook
+                                                   api/plumber.R webhook (/meta-webhook or /webhook)
                                                         (download, decode, log request)
                                                                           |
                                                                           v
@@ -45,7 +46,7 @@ Farmer's phone --(WhatsApp voice note, Opus/Ogg, 16kHz, ~16kbps)--> Twilio Sandb
                                                     top-3 classes + confidence + low-confidence flag
                                                                           |
                                                                           v
-                                              TwiML reply <-- pest ID + confidence + action
+                     WhatsApp reply (Graph API message or TwiML) <-- pest ID + confidence + action
                                                                           |
                                         dashboard/app.R (Shiny) <-- reads logs/requests.jsonl
                                           - live/replay view (waveform, spectrogram, confidence)
@@ -67,6 +68,8 @@ Pipeline stages (`R/`), each independently runnable:
 | `06_predict.R` | Single entry point: audio file in, top-3 classes + confidence + low-confidence flag out |
 | `07_compression_delta.R` | Trains a second model on uncompressed audio (same sources/split) to measure compression's actual accuracy cost |
 | `seed_demo_logs.R` | Seed the dashboard's replay mode with real `predict_pest()` output |
+| `start_webhook.R` | Load `.env` and start the webhook server (Meta at `/meta-webhook`, Twilio at `/webhook`) on port 8000 |
+| `11_twilio_smoke_test.R` / `12_meta_smoke_test.R` | Check credentials against Twilio / Meta and that the local webhook answers, before a live test |
 
 ## Quickstart
 
@@ -101,12 +104,16 @@ Rscript R/07_compression_delta.R      # measures compression's actual accuracy c
 Rscript R/seed_demo_logs.R            # seed dashboard replay mode
 
 # 4. Run the demo pieces
-Rscript -e "plumber::pr_run(plumber::pr('api/plumber.R'), port = 8000)"
+Rscript R/start_webhook.R              # loads .env; WhatsApp webhooks on port 8000
 Rscript -e "shiny::runApp('dashboard', port = 3838)"
 ```
 
-See `docs/twilio_setup.md` for wiring the webhook up to a real Twilio
-WhatsApp Sandbox.
+The live WhatsApp path uses **Meta's WhatsApp Cloud API** -- see
+`docs/meta_whatsapp_setup.md` for the setup (app, test number, `.env`
+values, tunnel, callback URL `https://<tunnel>/meta-webhook`). The Twilio
+sandbox path (`docs/twilio_setup.md`) is still there, but the Twilio trial
+couldn't download media or deliver replies (see `BLOCKERS.md`). The server
+starts with either provider configured.
 
 ## Data
 

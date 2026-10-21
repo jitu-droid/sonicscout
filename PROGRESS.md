@@ -1490,3 +1490,30 @@ cicada_orni, probabilities 0.55 apart) and passes after.
   12 seeded predictions re-run identical, still 6 of 12 right; all
   cross-validation numbers (computed on 16 kHz training windows); the
   dashboard (displays audio, never predicts).
+
+---
+
+## Session 10 — Meta WhatsApp Cloud API alongside Twilio
+
+The live Twilio trial (2026-10-21) received a voice note but could not
+download its media (HTTP 401) or deliver replies. Added Meta's WhatsApp
+Cloud API at `/meta-webhook` in `api/plumber.R`, leaving the Twilio
+endpoint and its tests unchanged:
+
+- `GET /meta-webhook` echoes `hub.challenge` only for the right verify token
+  (403 otherwise). `POST /meta-webhook` checks `X-Hub-Signature-256` when
+  `META_APP_SECRET` is set, acknowledges with 200 at once and processes via
+  `later::later()`, skips re-delivered message IDs, ignores status events.
+- Audio: media URL from the webhook or a Graph API lookup, downloaded with
+  the Bearer token, then the same duration check / `predict_pest()` /
+  `format_reply()` as Twilio. Replies sent through the Graph API; errors
+  logged with the token redacted. Log entries carry `"source":"meta"`.
+- Startup accepts Twilio-only or Meta-only configuration; a half-filled
+  provider is an error. `R/12_meta_smoke_test.R` checks the token against
+  the Graph API and the local verification handshake.
+- `tests/testthat/test-meta-webhook.R`: verification, signatures, audio end
+  to end against a mock Graph API (the held-out cicada demo clip as a 48 kHz
+  Opus voice note comes back "cicada_orni"), text/image, duplicates, status
+  events, token never logged, real log untouched, startup rules.
+- Setup steps: `docs/meta_whatsapp_setup.md`. Not yet tested against a real
+  phone (BLOCKERS.md item 2).

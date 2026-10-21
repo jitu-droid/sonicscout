@@ -29,24 +29,30 @@ synthetic-only, flagged explicitly wherever it's cited.
 If mosquito wingbeat detection matters for a future iteration, a real
 recording source for *Culex* (or another mosquito genus) is still needed.
 
-## 2. Set up Twilio sandbox and run a live test (needs your Twilio account)
+## 2. Live WhatsApp round trip: moved from Twilio to Meta's WhatsApp Cloud API (needs your Meta account)
 
-**What was tried:** N/A -- this fundamentally requires an account only you
-can create.
+**What was tried:** the Twilio WhatsApp sandbox, live, on 2026-10-21. Twilio
+delivered the incoming voice note to the webhook, but **downloading its
+media returned `HTTP 401 Unauthorized`** (`logs/requests.jsonl`, 13:45 entry,
+outcome `download_failed`), and **custom replies were never delivered** to
+the phone. Both look like Twilio trial-account restrictions rather than a
+webhook bug; not pursued further.
 
-**What's needed:** Follow `docs/twilio_setup.md` end to end: create a Twilio
-account, join the WhatsApp sandbox from your phone, set `TWILIO_ACCOUNT_SID`
-/ `TWILIO_AUTH_TOKEN` in a local `.env` (never commit it), expose
-`api/plumber.R` via a tunnel (e.g. ngrok), point the sandbox webhook at it,
-and send one real WhatsApp voice note through the full path.
+**What changed:** `api/plumber.R` now also serves Meta's WhatsApp Cloud API
+at `/meta-webhook` (verification, signature check, immediate acknowledgement,
+de-duplication, Graph API media download and replies). The Twilio endpoint
+is unchanged and still works with a Twilio account that allows media. Both
+are verified against local mocks (`tests/testthat/test-meta-webhook.R`,
+`tests/testthat/test-plumber-webhook.R`); neither has yet answered a real
+phone end to end.
 
-**What Jitu needs to do:** Everything in `docs/twilio_setup.md` -- this is
-the one part of the "definition of done" (a real WhatsApp voice note
-returning a correct ID) that cannot be automated without your credentials
-and phone. The webhook itself is verified working end-to-end against a
-mock Twilio payload (`tests/testthat/test-plumber-webhook.R`, 6/6 passing)
-and against the real trained model -- this item is specifically about the
-live/real-Twilio round trip.
+**What Jitu needs to do:** follow `docs/meta_whatsapp_setup.md` -- create the
+Meta app, add your number as a test recipient, fill in `META_ACCESS_TOKEN`,
+`META_PHONE_NUMBER_ID`, `META_VERIFY_TOKEN` (and ideally `META_APP_SECRET`)
+in `.env`, run `Rscript R/12_meta_smoke_test.R`, start a tunnel, set the
+callback URL to `https://<tunnel>/meta-webhook`, subscribe to `messages`,
+and send a voice note. Remember the temporary access token expires after
+about 24 hours.
 
 ## 3. CORRECTED: `av` does NOT actually segfault -- earlier entry was wrong
 

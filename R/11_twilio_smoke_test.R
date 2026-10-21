@@ -31,7 +31,7 @@ load_dot_env <- function(path = ".env") {
     key <- trimws(kv[1])
     value <- trimws(paste(kv[-1], collapse = "="))
     value <- gsub("^['\"]|['\"]$", "", value)  # strip surrounding quotes if present
-    if (Sys.getenv(key) == "") Sys.setenv(!!key := value)
+    if (Sys.getenv(key) == "") do.call(Sys.setenv, stats::setNames(list(value), key))
   }
   invisible(TRUE)
 }

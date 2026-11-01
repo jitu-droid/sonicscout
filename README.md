@@ -71,6 +71,19 @@ Pipeline stages (`R/`), each independently runnable:
 | `start_webhook.R` | Load `.env` and start the webhook server (Meta at `/meta-webhook`, Twilio at `/webhook`) on port 8000 |
 | `11_twilio_smoke_test.R` / `12_meta_smoke_test.R` | Check credentials against Twilio / Meta and that the local webhook answers, before a live test |
 
+## Install just the R package
+
+`whatsappaudioR`, the project's reusable package for turning compressed
+voice notes into tidy spectrogram data, is published on R-universe:
+
+```r
+install.packages("whatsappaudioR",
+                 repos = c("https://jitu-droid.r-universe.dev",
+                           "https://cloud.r-project.org"))
+```
+
+It needs a system FFmpeg build with libopus on `PATH`.
+
 ## Quickstart
 
 ```r

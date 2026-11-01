@@ -1,7 +1,9 @@
 Package: whatsappaudioR
 Title: Convert Compressed Mobile Voice Notes into Tidy Spectrogram Data
 Version: 0.2.0
-Authors@R: person("SonicScout", "Team", email = "adhikaryanirjit05@gmail.com", role = c("aut", "cre"))
+Authors@R: person("Anirjit", "Deb Adhikary", email = "adhikaryanirjit05@gmail.com", role = c("aut", "cre"))
+URL: https://github.com/jitu-droid/sonicscout
+BugReports: https://github.com/jitu-droid/sonicscout/issues
 Description: Reads compressed '.opus'/'.ogg' voice notes -- the kind produced
     by WhatsApp and similar VoIP messaging apps -- and converts them directly
     into tidy data frames of spectrogram and spectral-feature data, ready for
@@ -14,6 +16,7 @@ Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
 Depends: R (>= 4.1)
+SystemRequirements: FFmpeg (with libopus)
 Imports:
     tuneR,
     seewave,

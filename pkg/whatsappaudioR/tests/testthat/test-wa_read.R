@@ -12,6 +12,7 @@ test_that("wa_read reads a wav file directly", {
 })
 
 test_that("wa_read decodes the committed .opus fixture", {
+  skip_if_not(nzchar(Sys.which("ffmpeg")), "ffmpeg not available")
   fixture <- test_path("fixtures", "sample.opus")
   skip_if_not(file.exists(fixture), "fixture sample.opus not present")
 

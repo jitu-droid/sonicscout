@@ -115,6 +115,20 @@ sandbox path (`docs/twilio_setup.md`) is still there, but the Twilio trial
 couldn't download media or deliver replies (see `BLOCKERS.md`). The server
 starts with either provider configured.
 
+**Running the demo without the live WhatsApp reply.** Meta locked the
+project's WhatsApp Business Account with error 131031 ("Business Account
+locked") right after setup, so the live reply has not yet been tested on a
+real phone. The same prediction code runs locally instead: record a real
+WhatsApp voice note, download it from WhatsApp Web, and run
+
+```bash
+Rscript R/classify_voice_note.R                  # newest voice note in Downloads
+Rscript R/classify_voice_note.R path/to/file.ogg # or a specific file
+```
+
+It prints the top three guesses and the reply a farmer would receive, and
+logs the request so it appears on the dashboard.
+
 ## Data
 
 **InsectSet459** -- 26,399 audio files across 459 species of Orthoptera and
@@ -223,3 +237,8 @@ Read `docs/methodology.md` for the full pipeline write-up, measured
 numbers, and a candid limitations section (the 8kHz ceiling, real-data
 coverage, and more). Read `PROGRESS.md` and `BLOCKERS.md` for the full
 build log, including what's verified by actual execution vs. still open.
+
+## Acknowledgements
+
+Special thanks to **Dr. Amrit Pal**, our mentor for this project, for the
+guidance and support throughout.

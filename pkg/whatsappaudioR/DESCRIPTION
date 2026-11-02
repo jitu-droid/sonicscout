@@ -1,7 +1,9 @@
 Package: whatsappaudioR
 Title: Convert Compressed Mobile Voice Notes into Tidy Spectrogram Data
 Version: 0.2.0
-Authors@R: person("Anirjit", "Deb Adhikary", email = "adhikaryanirjit05@gmail.com", role = c("aut", "cre"))
+Authors@R: c(
+    person("Anirjit", "Deb Adhikary", email = "adhikaryanirjit05@gmail.com", role = c("aut", "cre")),
+    person("Charitha", "Vaddi", role = "aut"))
 URL: https://github.com/jitu-droid/sonicscout
 BugReports: https://github.com/jitu-droid/sonicscout/issues
 Description: Reads compressed '.opus'/'.ogg' voice notes -- the kind produced

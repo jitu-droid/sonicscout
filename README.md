@@ -251,6 +251,11 @@ numbers, and a candid limitations section (the 8kHz ceiling, real-data
 coverage, and more). Read `PROGRESS.md` and `BLOCKERS.md` for the full
 build log, including what's verified by actual execution vs. still open.
 
+## Authors
+
+- **Anirjit Deb Adhikary** ([@jitu-droid](https://github.com/jitu-droid))
+- **Charitha Vaddi** ([@charithavadd](https://github.com/charithavadd))
+
 ## Acknowledgements
 
 Special thanks to **Dr. Amrit Pal**, our mentor for this project, for the

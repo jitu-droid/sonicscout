@@ -27,8 +27,16 @@ Reads every supported audio file under \code{dir} (recursively) and applies
 leading \code{file} column identifying the source path.
 }
 \examples{
-\dontrun{
-features_df <- wa_batch("voice_notes/", wa_features)
+# Write two short tones into a temporary folder, then featurise both.
+d <- file.path(tempdir(), "wa_batch_example")
+dir.create(d, showWarnings = FALSE)
+for (f0 in c(300, 600)) {
+  tone <- tuneR::sine(f0, duration = 8000, samp.rate = 16000,
+                      bit = 16, pcm = TRUE)
+  tuneR::writeWave(tone, file.path(d, paste0("tone_", f0, ".wav")))
 }
+features_df <- wa_batch(d, wa_features)
+features_df[, c("file", "peak_freq_hz")]
+unlink(d, recursive = TRUE)
 
 }

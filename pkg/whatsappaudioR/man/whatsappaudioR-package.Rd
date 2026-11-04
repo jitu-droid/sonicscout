@@ -6,14 +6,23 @@
 \alias{whatsappaudioR-package}
 \title{whatsappaudioR: Convert Compressed Mobile Voice Notes into Tidy Spectrogram Data}
 \description{
-Reads compressed '.opus'/'.ogg' voice notes -- the kind produced by WhatsApp and similar VoIP messaging apps -- and converts them directly into tidy data frames of spectrogram and spectral-feature data, ready for analysis or modelling. Also provides a function to simulate the lossy compression such messaging apps apply, for testing how well a signal survives it. Built for a bioacoustic pest-detection pipeline (SonicScout) but has no dependency on that domain.
+Reads compressed '.opus' and '.ogg' voice notes, the kind produced by 'WhatsApp' and similar messaging apps, and converts them directly into tidy data frames of spectrogram and spectral-feature data, ready for analysis or modeling. Also provides a function to simulate the lossy compression such apps apply, for testing how well a signal survives it. Decoding and compression use a system 'FFmpeg' installation with 'libopus' support. Built for a bioacoustic pest-detection pipeline ('SonicScout') but has no dependency on that domain.
+}
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/jitu-droid/sonicscout}
+  \item Report bugs at \url{https://github.com/jitu-droid/sonicscout/issues}
+}
+
 }
 \author{
-\strong{Maintainer}: SonicScout Team \email{adhikaryanirjit05@gmail.com}
+\strong{Maintainer}: Anirjit Deb Adhikary \email{adhikaryanirjit05@gmail.com}
 
 Authors:
 \itemize{
-  \item SonicScout Team \email{adhikaryanirjit05@gmail.com}
+  \item Anirjit Deb Adhikary \email{adhikaryanirjit05@gmail.com}
+  \item Charitha Vaddi
 }
 
 }

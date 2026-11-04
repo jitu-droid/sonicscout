@@ -7,13 +7,13 @@
 #'
 #' @details
 #' # WORKAROUND: both encode and decode go through system ffmpeg
-#' [av::av_audio_convert()] would be the obvious choice here, and its
+#' `av::av_audio_convert()` would be the obvious choice here, and its
 #' installed version does have a `bit_rate` argument -- but empirically it
 #' (and even `av::av_media_info()`) segfaults R outright on the machine this
 #' package was built and tested on, including against `av`'s own bundled
 #' sample file. A segfault can't be caught with `tryCatch()`, which makes it
 #' unsafe to call from a long-running process. See `BLOCKERS.md` in the
-#' parent repo. Both the encode and decode steps here shell out to a system
+#' 'SonicScout' repository. Both the encode and decode steps here shell out to a system
 #' `ffmpeg` binary (with `libopus`) instead. This requires `ffmpeg` to be on
 #' `PATH`; call `Sys.which("ffmpeg")` to check.
 #'
@@ -25,9 +25,14 @@
 #' @return A [tuneR::Wave-class] object: the degraded, round-tripped audio.
 #'
 #' @examples
-#' \dontrun{
-#' w <- wa_read("clean_recording.wav")
-#' degraded <- wa_simulate_compression(w, bitrate = 16000, sr = 16000)
+#' # One second of a 440 Hz tone at 44.1 kHz.
+#' w <- tuneR::sine(440, duration = 44100, samp.rate = 44100,
+#'                  bit = 16, pcm = TRUE)
+#'
+#' # Needs a system 'FFmpeg' build with 'libopus'.
+#' if (nzchar(Sys.which("ffmpeg"))) {
+#'   degraded <- wa_simulate_compression(w, bitrate = 16000, sr = 16000)
+#'   degraded
 #' }
 #'
 #' @export
@@ -48,8 +53,10 @@ wa_simulate_compression <- function(wave, bitrate = 16000, sr = 16000) {
   tuneR::writeWave(wave, tmp_in)
 
   bitrate_kbps <- round(bitrate / 1000)
+  # -nostdin: otherwise ffmpeg reads keystrokes from the R process's
+  # stdin, which silently eats bytes of a script piped into R.
   encode_args <- c(
-    "-y", "-loglevel", "error",
+    "-nostdin", "-y", "-loglevel", "error",
     "-i", tmp_in,
     "-ar", as.character(sr),
     "-ac", "1",
@@ -60,7 +67,7 @@ wa_simulate_compression <- function(wave, bitrate = 16000, sr = 16000) {
   status <- system2(ffmpeg_bin, args = encode_args)
   if (status != 0) stop("ffmpeg encode step failed")
 
-  decode_args <- c("-y", "-loglevel", "error", "-i", tmp_ogg, "-ar", as.character(sr), "-ac", "1", tmp_out)
+  decode_args <- c("-nostdin", "-y", "-loglevel", "error", "-i", tmp_ogg, "-ar", as.character(sr), "-ac", "1", tmp_out)
   status <- system2(ffmpeg_bin, args = decode_args)
   if (status != 0) stop("ffmpeg decode step failed")
 

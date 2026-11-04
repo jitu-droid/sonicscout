@@ -24,21 +24,26 @@ downmix to mono, encode to Opus at \code{bitrate} bits/sec inside an Ogg
 container, then decode back to PCM.
 }
 \section{WORKAROUND: both encode and decode go through system ffmpeg}{
-\code{\link[av:av_audio_convert]{av::av_audio_convert()}} would be the obvious choice here, and its
+\code{av::av_audio_convert()} would be the obvious choice here, and its
 installed version does have a \code{bit_rate} argument -- but empirically it
 (and even \code{av::av_media_info()}) segfaults R outright on the machine this
 package was built and tested on, including against \code{av}'s own bundled
 sample file. A segfault can't be caught with \code{tryCatch()}, which makes it
 unsafe to call from a long-running process. See \code{BLOCKERS.md} in the
-parent repo. Both the encode and decode steps here shell out to a system
+'SonicScout' repository. Both the encode and decode steps here shell out to a system
 \code{ffmpeg} binary (with \code{libopus}) instead. This requires \code{ffmpeg} to be on
 \code{PATH}; call \code{Sys.which("ffmpeg")} to check.
 }
 
 \examples{
-\dontrun{
-w <- wa_read("clean_recording.wav")
-degraded <- wa_simulate_compression(w, bitrate = 16000, sr = 16000)
+# One second of a 440 Hz tone at 44.1 kHz.
+w <- tuneR::sine(440, duration = 44100, samp.rate = 44100,
+                 bit = 16, pcm = TRUE)
+
+# Needs a system 'FFmpeg' build with 'libopus'.
+if (nzchar(Sys.which("ffmpeg"))) {
+  degraded <- wa_simulate_compression(w, bitrate = 16000, sr = 16000)
+  degraded
 }
 
 }

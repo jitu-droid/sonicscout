@@ -14,48 +14,58 @@ knitr::opts_chunk$set(
   fig.width = 7,
   fig.height = 4
 )
+has_ffmpeg <- nzchar(Sys.which("ffmpeg"))
+has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
 ```
 
-`whatsappaudioR` converts compressed mobile voice notes -- the `.opus`/`.ogg`
-files produced by WhatsApp and similar VoIP messaging apps -- directly into
-tidy data frames ready for analysis. This vignette walks through the core
-path: **voice note -> tidy spectrogram -> plot**.
+`whatsappaudioR` converts compressed mobile voice notes (the `.opus`/`.ogg`
+files produced by WhatsApp and similar messaging apps) directly into tidy
+data frames ready for analysis. This vignette walks through the core path:
+**voice note -> tidy spectrogram -> plot -> features**.
 
 ## Reading a voice note
 
+With your own file, reading a voice note is one line:
+
 ```{r, eval = FALSE}
 library(whatsappaudioR)
-
 w <- wa_read("voice_note.opus")
-w
 ```
 
 `wa_read()` detects the file extension and, for compressed formats, decodes
-via a system `ffmpeg` binary into a `tuneR::Wave` object -- the same
+via a system `ffmpeg` binary into a `tuneR::Wave` object: the same
 representation you'd get from `tuneR::readWave()` on a plain `.wav` file, so
 the rest of the R audio ecosystem (`tuneR`, `seewave`) works on it unchanged.
 
+The package ships a three-second example voice note, which the rest of this
+vignette uses. Here it is decoded and resampled to 16 kHz mono:
+
+```{r}
+library(whatsappaudioR)
+
+f <- system.file("extdata", "sample.opus", package = "whatsappaudioR")
+if (has_ffmpeg) {
+  w <- wa_read(f, sample_rate = 16000, mono = TRUE)
+} else {
+  # No FFmpeg on the machine that built this vignette: fall back to a
+  # synthetic one-second 440 Hz tone so the remaining steps still run.
+  w <- tuneR::sine(440, duration = 16000, samp.rate = 16000)
+}
+w
+```
+
 ## Tidy spectrogram
 
-```{r, eval = FALSE}
+```{r}
 spec_df <- wa_spectrogram(w, wl = 1024)
 head(spec_df)
 ```
 
-```
-#> # A tibble: 6 x 3
-#>    time  freq amplitude
-#>   <dbl> <dbl>     <dbl>
-#> 1 0.032 0.000     -38.2
-#> 2 0.032 0.016     -41.7
-#> ...
-```
-
-`freq` is in kHz (matching `seewave`'s convention); `amplitude` is in dB.
+`freq` is in kHz (matching `seewave`'s convention) and `amplitude` is in dB.
 Because the result is a long-format tibble, it plots directly with
 `ggplot2`:
 
-```{r, eval = FALSE}
+```{r, eval = has_ggplot2}
 library(ggplot2)
 
 ggplot(spec_df, aes(x = time, y = freq, fill = amplitude)) +
@@ -64,26 +74,32 @@ ggplot(spec_df, aes(x = time, y = freq, fill = amplitude)) +
   labs(x = "Time (s)", y = "Frequency (kHz)", fill = "Amplitude (dB)")
 ```
 
-## Spectral features
+## Spectral and temporal features
 
-```{r, eval = FALSE}
-wa_features(w)
+```{r}
+feats <- wa_features(w)
+dim(feats)
+feats[, c("peak_freq_hz", "spectral_centroid_hz", "spectral_flatness",
+          "pulse_rate_hz", "duty_cycle")]
 ```
 
-Returns a one-row tibble of documented spectral features (peak frequency,
-spectral centroid, flatness, entropy, rolloff, dominant-frequency stability,
-a harmonic-energy heuristic, and 12 MFCCs) -- see `?wa_features` for exact
-definitions. Nothing here is a black box: every column is a named,
-inspectable, conventional bioacoustic/audio feature.
+Returns a one-row tibble of documented features: peak frequency, spectral
+centroid, flatness, entropy, rolloff, dominant-frequency stability, a
+harmonic-energy heuristic, temporal features computed from the amplitude
+envelope, and 12 MFCCs. See `?wa_features` for exact definitions. Nothing
+here is a black box: every column is a named, inspectable, conventional
+bioacoustic or audio feature.
 
 ## Simulating compression
 
 If you have clean, uncompressed audio and want to know how it would sound
 (and measure) after passing through a WhatsApp-style pipeline:
 
-```{r, eval = FALSE}
-clean <- wa_read("clean_recording.wav")
+```{r, eval = has_ffmpeg}
+clean <- tuneR::sine(440, duration = 44100, samp.rate = 44100,
+                     bit = 16, pcm = TRUE)
 degraded <- wa_simulate_compression(clean, bitrate = 16000, sr = 16000)
+degraded
 ```
 
 This requires a system `ffmpeg` build with `libopus` support.

@@ -12,7 +12,7 @@
 #' `harmonic_energy_ratio` (a simple heuristic, see Details), and 12 MFCCs
 #' (mean over frames).
 #'
-#' **Temporal** (added Prompt 9, see Details): `pulse_rate_hz`,
+#' **Temporal** (see Details): `pulse_rate_hz`,
 #' `ipi_mean_s`/`ipi_sd_s`/`ipi_cv`, `envelope_mod_freq_hz`/
 #' `envelope_mod_peak_ratio`, `temporal_entropy`, `duty_cycle`,
 #' `phrase_duration_s`, `n_phrase_bouts`, `phrase_duty_cycle`. Added
@@ -23,9 +23,9 @@
 #' Helversen 1997, J Comp Physiol A 180:373-386; Gottsberger & Mayer 2007,
 #' J Comp Physiol A 193:703-714). A feature set that is almost entirely
 #' spectral is asking a classifier to separate these two species along
-#' the dimension where they are most alike. See `docs/methodology.md` for
-#' the full biological reasoning and whether these features actually
-#' helped.
+#' the dimension where they are most alike. See `docs/methodology.md` in
+#' the 'SonicScout' repository for the full biological reasoning and
+#' whether these features actually helped.
 #'
 #' @details
 #' `harmonic_energy_ratio` is the fraction of total spectral energy that
@@ -61,20 +61,21 @@
 #' "no measurable temporal structure" reading here, for the same reason
 #' `harmonic_energy_ratio_from_spectrum()` returns 0 rather than NA: an NA
 #' would silently drop the whole window from any `complete.cases()`-based
-#' training filter downstream, which is exactly the bug class the
-#' Session 3 `harmonic_energy_ratio` confound came from.
+#' training filter downstream, a bug class that was found and fixed for
+#' `harmonic_energy_ratio` during development.
 #'
 #' @param wave A [tuneR::Wave-class] object, e.g. from [wa_read()].
 #' @param wl Window length (samples) used for the underlying STFT/mean
 #'   spectrum. See [wa_spectrogram()] for the same parameter.
 #'
-#' @return A one-row tibble.
+#' @return A one-row tibble with one numeric column per feature: the
+#'   spectral and temporal features listed above, plus `mfcc_1` to `mfcc_12`.
 #'
 #' @examples
-#' \dontrun{
-#' w <- wa_read("voice_note.opus")
-#' wa_features(w)
-#' }
+#' # One second of a 440 Hz tone.
+#' w <- tuneR::sine(440, duration = 16000, samp.rate = 16000)
+#' feats <- wa_features(w)
+#' feats[, c("peak_freq_hz", "spectral_centroid_hz", "duty_cycle")]
 #'
 #' @export
 wa_features <- function(wave, wl = 1024) {
@@ -127,7 +128,7 @@ wa_features <- function(wave, wl = 1024) {
   ))
 }
 
-# ---- Temporal features (Prompt 9) -------------------------------------------
+# ---- Temporal features -------------------------------------------------------
 
 #' Local maxima of a normalized envelope, with a relative height threshold
 #' and a minimum-distance non-max-suppression pass (greedy, highest peaks
@@ -181,7 +182,7 @@ wa_temporal_features <- function(wave) {
     # >= 3 peaks needed, not >= 2: exactly 2 peaks gives exactly one
     # inter-pulse interval, and stats::sd() of a length-1 vector is NA
     # (not an error) -- found as a real bug via 9 non-finite feature rows
-    # silently dropped from a training run (Prompt 9). "No measurable
+    # silently dropped from a training run. "No measurable
     # spread from a single interval" is a legitimate 0, not an unknown.
     ipi <- diff(sort(peaks) / env_sr)
     ipi_mean_s <- mean(ipi)

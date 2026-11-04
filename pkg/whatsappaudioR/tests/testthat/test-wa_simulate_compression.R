@@ -24,6 +24,6 @@ test_that("wa_simulate_compression destroys a signal above the target Nyquist (r
 
   # Ground-truth check: a 10kHz tone cannot survive a resample to 16kHz
   # (8kHz Nyquist). If this fails, the compression simulation itself is
-  # wrong -- see docs/codec_findings.md in the parent repo.
+  # wrong -- see docs/codec_findings.md in the SonicScout repository.
   expect_lt(degraded_rms, 0.05)
 })

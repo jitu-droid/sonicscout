@@ -8,8 +8,10 @@ has no dependency on it or on anything pest/insect-related.
 ## Quickstart
 
 ```r
-# install.packages(c("tuneR", "seewave", "tibble"))  # if needed
-devtools::install("pkg/whatsappaudioR")  # or install_local(), from this repo
+# Install from R-universe:
+install.packages("whatsappaudioR",
+                 repos = c("https://jitu-droid.r-universe.dev",
+                           "https://cloud.r-project.org"))
 
 library(whatsappaudioR)
 

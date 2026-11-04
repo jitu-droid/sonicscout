@@ -26,7 +26,7 @@ directly, and \code{.mp3}/\code{.m4a} are routed through the same decode step as
 opus/ogg.
 }
 \section{WORKAROUND: decoding via system ffmpeg instead of \code{av}}{
-The obvious implementation would use \code{\link[av:av_audio_convert]{av::av_audio_convert()}} (\code{av} binds
+The obvious implementation would use \code{av::av_audio_convert()} (\code{av} binds
 FFmpeg's libav* libraries directly, no subprocess needed). That was tried
 first, but on the machine this package was built and tested on,
 \code{av::av_audio_convert()} and even \code{av::av_media_info()} segfault the R
@@ -34,7 +34,7 @@ process outright -- confirmed even against \code{av}'s own bundled sample
 file, so it isn't an input-file issue. A segfault can't be caught with
 \code{tryCatch()}, which makes \code{av} unsafe to call from a long-running
 process (a webhook server, a Shiny session) on that machine. See
-\code{BLOCKERS.md} in the parent repo for the full diagnosis. This function
+\code{BLOCKERS.md} in the 'SonicScout' repository for the full diagnosis. This function
 shells out to a system \code{ffmpeg} binary instead, which is confirmed
 working. If a future \code{av} version/rebuild is confirmed not to segfault
 on your machine, switching back to \code{av::av_audio_convert()} would avoid
@@ -51,9 +51,22 @@ resampler (with anti-aliasing), not naive decimation.
 }
 
 \examples{
-\dontrun{
-w <- wa_read("voice_note.opus")
-w16 <- wa_read("voice_note.opus", sample_rate = 16000, mono = TRUE)
+# A short example voice note ships with the package.
+f <- system.file("extdata", "sample.opus", package = "whatsappaudioR")
+
+# Decoding '.opus' needs a system 'FFmpeg' build with 'libopus'.
+if (nzchar(Sys.which("ffmpeg"))) {
+  w <- wa_read(f)
+  w16 <- wa_read(f, sample_rate = 16000, mono = TRUE)
+  w16
 }
+
+# '.wav' files are read directly and need no 'FFmpeg'.
+tmp <- tempfile(fileext = ".wav")
+tone <- tuneR::sine(440, duration = 8000, samp.rate = 16000,
+                    bit = 16, pcm = TRUE)
+tuneR::writeWave(tone, tmp)
+wa_read(tmp)
+unlink(tmp)
 
 }

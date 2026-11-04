@@ -43,7 +43,7 @@ test_that("harmonic_energy_ratio_from_spectrum returns 0, not NA, with no well-d
 test_that("wa_temporal_features returns 0, not NA, on pure digital silence", {
   # Same discipline as harmonic_energy_ratio above: an NA here would
   # silently drop the whole window from complete.cases()-based training
-  # filters (Prompt 9). Tested directly against the internal function,
+  # filters. Tested directly against the internal function,
   # not through the full wa_features() pipeline, because pure digital
   # silence separately crashes seewave::specprop() for unrelated reasons
   # (an existing, documented, out-of-scope limitation -- see this file's
@@ -66,7 +66,7 @@ test_that("wa_temporal_features returns 0, not NA, for ipi_sd/ipi_cv with exactl
   # Regression test: exactly 2 detected peaks gives exactly ONE inter-pulse
   # interval, and stats::sd() of a length-1 vector is NA (not an error) --
   # found via 9 real training rows silently dropped for non-finite
-  # features in a real k-fold run (Prompt 9), same NA-leak bug class as
+  # features in a real k-fold run, same NA-leak bug class as
   # the harmonic_energy_ratio confound above. "No measurable spread from a
   # single interval" is a legitimate 0, not "unknown".
   sr <- 16000

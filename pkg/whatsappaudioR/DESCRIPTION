@@ -6,16 +6,16 @@ Authors@R: c(
     person("Charitha", "Vaddi", role = "aut"))
 URL: https://github.com/jitu-droid/sonicscout
 BugReports: https://github.com/jitu-droid/sonicscout/issues
-Description: Reads compressed '.opus'/'.ogg' voice notes -- the kind produced
-    by WhatsApp and similar VoIP messaging apps -- and converts them directly
-    into tidy data frames of spectrogram and spectral-feature data, ready for
-    analysis or modelling. Also provides a function to simulate the
-    lossy compression such messaging apps apply, for testing how well a
-    signal survives it. Built for a bioacoustic pest-detection pipeline
-    (SonicScout) but has no dependency on that domain.
+Description: Reads compressed '.opus' and '.ogg' voice notes, the kind
+    produced by 'WhatsApp' and similar messaging apps, and converts them
+    directly into tidy data frames of spectrogram and spectral-feature data,
+    ready for analysis or modeling. Also provides a function to simulate the
+    lossy compression such apps apply, for testing how well a signal
+    survives it. Decoding and compression use a system 'FFmpeg' installation
+    with 'libopus' support. Built for a bioacoustic pest-detection pipeline
+    ('SonicScout') but has no dependency on that domain.
 License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
 Roxygen: list(markdown = TRUE)
 Depends: R (>= 4.1)
 SystemRequirements: FFmpeg (with libopus)

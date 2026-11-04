@@ -8,7 +8,7 @@
 #'
 #' @details
 #' # WORKAROUND: decoding via system ffmpeg instead of `av`
-#' The obvious implementation would use [av::av_audio_convert()] (`av` binds
+#' The obvious implementation would use `av::av_audio_convert()` (`av` binds
 #' FFmpeg's libav* libraries directly, no subprocess needed). That was tried
 #' first, but on the machine this package was built and tested on,
 #' `av::av_audio_convert()` and even `av::av_media_info()` segfault the R
@@ -16,7 +16,7 @@
 #' file, so it isn't an input-file issue. A segfault can't be caught with
 #' `tryCatch()`, which makes `av` unsafe to call from a long-running
 #' process (a webhook server, a Shiny session) on that machine. See
-#' `BLOCKERS.md` in the parent repo for the full diagnosis. This function
+#' `BLOCKERS.md` in the 'SonicScout' repository for the full diagnosis. This function
 #' shells out to a system `ffmpeg` binary instead, which is confirmed
 #' working. If a future `av` version/rebuild is confirmed not to segfault
 #' on your machine, switching back to `av::av_audio_convert()` would avoid
@@ -39,10 +39,23 @@
 #' @return A [tuneR::Wave-class] object.
 #'
 #' @examples
-#' \dontrun{
-#' w <- wa_read("voice_note.opus")
-#' w16 <- wa_read("voice_note.opus", sample_rate = 16000, mono = TRUE)
+#' # A short example voice note ships with the package.
+#' f <- system.file("extdata", "sample.opus", package = "whatsappaudioR")
+#'
+#' # Decoding '.opus' needs a system 'FFmpeg' build with 'libopus'.
+#' if (nzchar(Sys.which("ffmpeg"))) {
+#'   w <- wa_read(f)
+#'   w16 <- wa_read(f, sample_rate = 16000, mono = TRUE)
+#'   w16
 #' }
+#'
+#' # '.wav' files are read directly and need no 'FFmpeg'.
+#' tmp <- tempfile(fileext = ".wav")
+#' tone <- tuneR::sine(440, duration = 8000, samp.rate = 16000,
+#'                     bit = 16, pcm = TRUE)
+#' tuneR::writeWave(tone, tmp)
+#' wa_read(tmp)
+#' unlink(tmp)
 #'
 #' @export
 wa_read <- function(path, sample_rate = NULL, mono = FALSE) {
@@ -79,7 +92,9 @@ wa_read <- function(path, sample_rate = NULL, mono = FALSE) {
 
   tmp_wav <- tempfile(fileext = ".wav")
   on.exit(unlink(tmp_wav), add = TRUE)
-  args <- c("-y", "-loglevel", "error", "-i", shQuote(path))
+  # -nostdin: otherwise ffmpeg reads keystrokes from the R process's
+  # stdin, which silently eats bytes of a script piped into R.
+  args <- c("-nostdin", "-y", "-loglevel", "error", "-i", shQuote(path))
   if (!is.null(sample_rate)) args <- c(args, "-ar", as.character(as.integer(sample_rate)))
   if (mono) args <- c(args, "-ac", "1")
   # shQuote: system2() passes arguments unquoted, so a path with spaces breaks.

@@ -15,10 +15,10 @@
 #'   `seewave`'s convention), and `amplitude`.
 #'
 #' @examples
-#' \dontrun{
-#' w <- wa_read("voice_note.opus")
-#' spec_df <- wa_spectrogram(w, wl = 2048)
-#' }
+#' # Half a second of a 440 Hz tone.
+#' w <- tuneR::sine(440, duration = 8000, samp.rate = 16000)
+#' spec_df <- wa_spectrogram(w, wl = 512)
+#' head(spec_df)
 #'
 #' @export
 wa_spectrogram <- function(wave, wl = 1024, ovlp = 50) {

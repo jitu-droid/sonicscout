@@ -2,7 +2,8 @@
 % Please edit documentation in R/wa_features.R
 \name{wa_features}
 \alias{wa_features}
-\title{Compute a one-row tibble of spectral features from a Wave object}
+\title{Compute a one-row tibble of spectral AND temporal features from a Wave
+object}
 \usage{
 wa_features(wave, wl = 1024)
 }
@@ -13,29 +14,79 @@ wa_features(wave, wl = 1024)
 spectrum. See \code{\link[=wa_spectrogram]{wa_spectrogram()}} for the same parameter.}
 }
 \value{
-A one-row tibble.
+A one-row tibble with one numeric column per feature: the
+spectral and temporal features listed above, plus \code{mfcc_1} to \code{mfcc_12}.
 }
 \description{
 Extracts a documented, inspectable feature set rather than a black-box
-embedding, so results can be explained rather than just trusted:
-\code{peak_freq_hz}, \code{spectral_centroid_hz}, \code{spectral_flatness},
-\code{spectral_entropy}, \code{spectral_rolloff85_hz} (frequency below which 85\% of
-spectral energy lies), \code{dominant_freq_sd_hz} (stability of the dominant
-frequency contour over time -- low means tonal/steady, high means
-erratic), \code{harmonic_energy_ratio} (a simple heuristic, see Details), and
-12 MFCCs (mean over frames).
+embedding, so results can be explained rather than just trusted.
 }
 \details{
+\strong{Spectral} (original feature set): \code{peak_freq_hz},
+\code{spectral_centroid_hz}, \code{spectral_flatness}, \code{spectral_entropy},
+\code{spectral_rolloff85_hz} (frequency below which 85\% of spectral energy
+lies), \code{dominant_freq_sd_hz} (stability of the dominant frequency
+contour over time -- low means tonal/steady, high means erratic),
+\code{harmonic_energy_ratio} (a simple heuristic, see Details), and 12 MFCCs
+(mean over frames).
+
+\strong{Temporal} (see Details): \code{pulse_rate_hz},
+\code{ipi_mean_s}/\code{ipi_sd_s}/\code{ipi_cv}, \code{envelope_mod_freq_hz}/
+\code{envelope_mod_peak_ratio}, \code{temporal_entropy}, \code{duty_cycle},
+\code{phrase_duration_s}, \code{n_phrase_bouts}, \code{phrase_duty_cycle}. Added
+because \emph{Chorthippus biguttulus} and \emph{C. brunneus} -- two of this
+project's three real target classes -- are sympatric congeners whose
+species boundary is maintained by TEMPORAL song structure (syllable
+pattern, phrase duration), not spectral content (von Helversen & von
+Helversen 1997, J Comp Physiol A 180:373-386; Gottsberger & Mayer 2007,
+J Comp Physiol A 193:703-714). A feature set that is almost entirely
+spectral is asking a classifier to separate these two species along
+the dimension where they are most alike. See \code{docs/methodology.md} in
+the 'SonicScout' repository for the full biological reasoning and
+whether these features actually helped.
+
 \code{harmonic_energy_ratio} is the fraction of total spectral energy that
 falls within a narrow band around the first 5 integer multiples of the
 peak frequency. It is a lightweight, transparent heuristic for "how
 harmonic does this sound look", not a validated harmonicity/HNR index --
 report it as such.
+
+Temporal features are all derived from the Hilbert amplitude envelope
+(\code{seewave::env()}) at two smoothing scales:
+\itemize{
+\item A FINE scale (~2ms smoothing, chosen so the resulting envelope's
+effective sample rate, ~500Hz, comfortably resolves both the ~10Hz
+syllable repetition rate and the ~70Hz within-syllable pulse rate
+reported for these species) for \code{pulse_rate_hz} (peaks/second, via a
+local-maxima detector with a relative height threshold and a 10ms
+minimum-distance non-max-suppression pass -- a refractory period
+below which two peaks are almost certainly the same pulse's ripple,
+not two pulses), \verb{ipi_*} (inter-peak-interval mean/sd/coefficient of
+variation), \code{envelope_mod_freq_hz}/\code{envelope_mod_peak_ratio} (the
+dominant frequency and prominence of the envelope's OWN modulation
+spectrum -- an FFT of the envelope itself, not the audio -- searched
+over 2-100Hz to avoid slow non-rhythmic trends near DC while still
+covering both the syllable and pulse rate), and \code{duty_cycle}
+(fraction of the window above 10\% of its own envelope peak).
+\item A COARSE scale (~30ms smoothing) for phrase/bout-level on-off
+structure: \code{phrase_duration_s} (the longest continuous above-15\%-
+threshold run in the window -- a proxy for "how long is one bout of
+song here"), \code{n_phrase_bouts} (how many separate bouts), and
+\code{phrase_duty_cycle}.
+}
+
+All temporal features return 0 (not NA) on a degenerate window
+(silence, or too short to compute an envelope) -- 0 is a legitimate
+"no measurable temporal structure" reading here, for the same reason
+\code{harmonic_energy_ratio_from_spectrum()} returns 0 rather than NA: an NA
+would silently drop the whole window from any \code{complete.cases()}-based
+training filter downstream, a bug class that was found and fixed for
+\code{harmonic_energy_ratio} during development.
 }
 \examples{
-\dontrun{
-w <- wa_read("voice_note.opus")
-wa_features(w)
-}
+# One second of a 440 Hz tone.
+w <- tuneR::sine(440, duration = 16000, samp.rate = 16000)
+feats <- wa_features(w)
+feats[, c("peak_freq_hz", "spectral_centroid_hz", "duty_cycle")]
 
 }
